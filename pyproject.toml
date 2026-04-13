@@ -1,0 +1,41 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "yt-transcriber-cli"
+version = "0.1.0"
+description = "Local YouTube transcript preparation pipeline for Apple Silicon Macs."
+readme = "README.md"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+  "mlx-qwen3-asr[diarize]>=0.3.2",
+  "pydantic>=2",
+  "rich>=13",
+  "typer>=0.12",
+  "webvtt-py",
+  "yt-dlp",
+]
+
+[project.scripts]
+yt-transcriber = "youtube_local_pipeline.cli:app"
+yt-transcriber-qwen = "youtube_local_pipeline.qwen_cli:main"
+
+[dependency-groups]
+dev = [
+  "pytest>=8",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/youtube_local_pipeline"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+  "/src",
+  "/README.md",
+  "/pyproject.toml",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
