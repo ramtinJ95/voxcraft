@@ -10,7 +10,7 @@ from youtube_local_pipeline.models import SourceKind, TranscriptSegment, Transcr
 from youtube_local_pipeline.pipeline import _transcription_details_match, process_video
 from youtube_local_pipeline.qwen_cli import apply_mlx_qwen3_asr_patch
 from youtube_local_pipeline.subtitles import load_segments, write_transcript_artifacts
-from youtube_local_pipeline.summarize import summarize_video
+from youtube_local_pipeline.summarize import summarize_video, wrap_markdown_text
 from youtube_local_pipeline.transcribe import (
     TranscriptionRequest,
     resolve_whisper_cpp_model_path,
@@ -454,7 +454,19 @@ def test_summarize_video_writes_chunk_and_final_outputs(monkeypatch, tmp_path: P
     ) -> str:
         captured_reasoning_efforts.append(reasoning_effort)
         if "Combine these chunk summaries" in prompt:
-            content = "# Final Summary\n\nFinal combined summary."
+            content = (
+                "# Final Summary\n\n"
+                "This is a deliberately long final summary paragraph that should be wrapped "
+                "by the pipeline after Codex finishes writing the final markdown file so that "
+                "no prose line exceeds the configured maximum width.\n\n"
+                "## Main Takeaways\n"
+                "- This bullet point is also deliberately long so the wrapper has to reflow "
+                "it instead of leaving a single oversized markdown list line in place.\n\n"
+                "## Timeline\n"
+                "- One long timeline bullet that should also be wrapped correctly.\n\n"
+                "## Open Questions Or Uncertainties\n"
+                "- None."
+            )
         else:
             content = "## Chunk Summary\n\nChunk summary.\n\n## Key Points\n- One\n\n## Notable Details\n- Detail"
         write_text(output_path, content + "\n")
@@ -472,6 +484,28 @@ def test_summarize_video_writes_chunk_and_final_outputs(monkeypatch, tmp_path: P
     assert paths.summary_final_path.exists()
     assert paths.summary_manifest_path.exists()
     assert captured_reasoning_efforts == ["high", "high"]
+    assert all(len(line) <= 80 for line in paths.summary_final_path.read_text(encoding="utf-8").splitlines())
+
+
+def test_wrap_markdown_text_wraps_paragraphs_and_bullets_to_80_columns() -> None:
+    content = (
+        "# Final Summary\n\n"
+        "This paragraph should be wrapped by the markdown formatter because it is much longer "
+        "than eighty characters and should therefore not remain as a single line in the final "
+        "summary document.\n\n"
+        "## Main Takeaways\n"
+        "- This bullet should also be wrapped cleanly so that continuation lines align under "
+        "the bullet body instead of exceeding the line width.\n"
+    )
+
+    wrapped = wrap_markdown_text(content, width=80)
+    wrapped_lines = wrapped.splitlines()
+
+    assert wrapped_lines[0] == "# Final Summary"
+    assert "## Main Takeaways" in wrapped_lines
+    takeaway_index = wrapped_lines.index("## Main Takeaways")
+    assert wrapped_lines[takeaway_index + 1].startswith("- ")
+    assert all(len(line) <= 80 for line in wrapped_lines)
 
 
 def test_resolve_video_root_prefers_human_readable_name_and_finds_legacy_dirs(tmp_path: Path) -> None:

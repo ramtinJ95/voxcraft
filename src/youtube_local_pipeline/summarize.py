@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
+import textwrap
 from pathlib import Path
 
 from .config import PipelineConfig
@@ -15,6 +17,11 @@ from .models import (
     VideoMetadata,
 )
 from .utils import append_log, path_string, read_json, write_json, write_text
+
+FINAL_SUMMARY_WRAP_WIDTH = 80
+FENCE_PATTERN = re.compile(r"^\s*(```|~~~)")
+LIST_ITEM_PATTERN = re.compile(r"^(\s*)([-*+]|\d+\.)\s+(.*)$")
+BLOCKQUOTE_PATTERN = re.compile(r"^(\s*>\s?)(.*)$")
 
 
 def summarize_video(
@@ -35,6 +42,7 @@ def summarize_video(
         if len(manifest.chunk_summaries) == len(chunk_manifest) and all(
             (paths.root_dir / entry.output_path).exists() for entry in manifest.chunk_summaries
         ):
+            wrap_markdown_file(paths.summary_final_path, width=FINAL_SUMMARY_WRAP_WIDTH)
             summary_payload = SummaryPayload.model_validate(read_json(paths.summary_payload_path))
             return ProcessResult(
                 metadata=metadata,
@@ -112,6 +120,7 @@ def summarize_video(
         final_summary_path=path_string(paths.summary_final_path, paths.root_dir),
     )
     write_json(paths.summary_manifest_path, summary_manifest.model_dump(mode="json"))
+    wrap_markdown_file(paths.summary_final_path, width=FINAL_SUMMARY_WRAP_WIDTH)
 
     summary_payload = SummaryPayload.model_validate(read_json(paths.summary_payload_path))
     return ProcessResult(
@@ -261,4 +270,114 @@ def _load_summary_manifest(path: Path) -> SummaryManifest | None:
 def _codex_reasoning_effort_for_model(model: str | None) -> str | None:
     if model == "gpt-5.4":
         return "high"
+    return None
+
+
+def wrap_markdown_file(path: Path, width: int = FINAL_SUMMARY_WRAP_WIDTH) -> bool:
+    content = path.read_text(encoding="utf-8")
+    wrapped = wrap_markdown_text(content, width=width)
+    if wrapped == content:
+        return False
+    write_text(path, wrapped)
+    return True
+
+
+def wrap_markdown_text(content: str, width: int = FINAL_SUMMARY_WRAP_WIDTH) -> str:
+    lines = content.splitlines()
+    wrapped_lines: list[str] = []
+    paragraph_lines: list[str] = []
+    in_fence = False
+
+    def flush_paragraph() -> None:
+        if not paragraph_lines:
+            return
+        paragraph = " ".join(line.strip() for line in paragraph_lines if line.strip())
+        wrapped_lines.extend(
+            textwrap.fill(
+                paragraph,
+                width=width,
+                break_long_words=False,
+                break_on_hyphens=False,
+            ).splitlines()
+        )
+        paragraph_lines.clear()
+
+    for line in lines:
+        stripped = line.strip()
+        if FENCE_PATTERN.match(line):
+            flush_paragraph()
+            wrapped_lines.append(line.rstrip())
+            in_fence = not in_fence
+            continue
+
+        if in_fence:
+            wrapped_lines.append(line.rstrip())
+            continue
+
+        if not stripped:
+            flush_paragraph()
+            wrapped_lines.append("")
+            continue
+
+        if _is_passthrough_markdown_line(stripped):
+            flush_paragraph()
+            wrapped_lines.append(line.rstrip())
+            continue
+
+        wrapped_special = _wrap_special_markdown_line(line, width=width)
+        if wrapped_special is not None:
+            flush_paragraph()
+            wrapped_lines.extend(wrapped_special)
+            continue
+
+        paragraph_lines.append(line)
+
+    flush_paragraph()
+    return "\n".join(wrapped_lines).rstrip() + "\n"
+
+
+def _is_passthrough_markdown_line(stripped: str) -> bool:
+    return (
+        stripped.startswith("#")
+        or stripped.startswith("|")
+        or stripped.startswith("<")
+        or _is_horizontal_rule(stripped)
+    )
+
+
+def _is_horizontal_rule(stripped: str) -> bool:
+    return stripped in {"---", "***", "___"}
+
+
+def _wrap_special_markdown_line(line: str, *, width: int) -> list[str] | None:
+    list_match = LIST_ITEM_PATTERN.match(line)
+    if list_match is not None:
+        indent, marker, body = list_match.groups()
+        body = body.strip()
+        if not body:
+            return [line.rstrip()]
+        item_prefix = f"{indent}{marker} "
+        return textwrap.fill(
+            body,
+            width=width,
+            initial_indent=item_prefix,
+            subsequent_indent=" " * len(item_prefix),
+            break_long_words=False,
+            break_on_hyphens=False,
+        ).splitlines()
+
+    blockquote_match = BLOCKQUOTE_PATTERN.match(line)
+    if blockquote_match is not None:
+        prefix, body = blockquote_match.groups()
+        body = body.strip()
+        if not body:
+            return [line.rstrip()]
+        return textwrap.fill(
+            body,
+            width=width,
+            initial_indent=prefix,
+            subsequent_indent=" " * len(prefix),
+            break_long_words=False,
+            break_on_hyphens=False,
+        ).splitlines()
     return None
