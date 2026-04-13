@@ -1,0 +1,4 @@
+interface:
+  display_name: "YT Transcriber CLI"
+  short_description: "Operate the local YouTube transcript and summary pipeline."
+  default_prompt: "Use the local yt-transcriber CLI to process a YouTube video, inspect artifacts, diagnose runs, or summarize an existing transcript workspace."
