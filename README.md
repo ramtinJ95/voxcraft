@@ -8,7 +8,7 @@ The workflow is:
 - otherwise download audio and transcribe locally
 - optionally diarize speakers
 - chunk the transcript
-- optionally summarize chunks and the full video through the `codex` CLI
+- optionally summarize chunks and the full video through a supported agent CLI
 
 Outputs are written per video under `data/videos/<title-slug>--<youtube_id>/`.
 
@@ -22,14 +22,16 @@ The current default stack is:
 - Forced aligner: `Qwen/Qwen3-ForcedAligner-0.6B`
 - Diarization model: `pyannote/speaker-diarization-community-1`
 - Fallback backend: `whisper.cpp`
-- Summary model: `gpt-5.4`
+- Default summary provider: `codex`
+- Default Codex summary model: `gpt-5.4`
+- Default Codex thinking level: `high`
 
 The default Qwen path is invoked through the repo-owned `yt-transcriber-qwen` wrapper. That wrapper patches the upstream loader so the hybrid `mlx-community/Qwen3-ASR-1.7B-8bit` checkpoint works in a fresh environment without hand-editing the venv.
 
 ## Known Limitations
 
 - The default ASR path is Apple Silicon oriented because it depends on MLX.
-- Summarization is not local. It requires the authenticated `codex` CLI.
+- Summarization is not local. It requires an authenticated supported summary CLI.
 - Diarization requires Hugging Face access to the gated pyannote model.
 - Long Qwen runs currently use `--quiet --no-progress`, so they can appear idle while they are still computing.
 
@@ -44,7 +46,13 @@ Required external tool:
 
 Optional external tools:
 - `codex`
-  Required only for `--summarize`
+  Optional summary CLI
+- `claude`
+  Optional summary CLI
+- `gemini`
+  Optional summary CLI
+- `pi`
+  Optional summary CLI
 - `whisper-cli`
   Required only for `--asr-backend whisper-cpp`
 
@@ -93,17 +101,19 @@ There are two important gated integrations:
    - `HF_TOKEN`
    - `HUGGINGFACE_TOKEN`
 
-2. Codex summarization
+2. Summary CLI authentication
    The transcript pipeline is local. Summarization is not.
 
    `yt-transcriber summarize ...` and `yt-transcriber process ... --summarize` require:
-   - the `codex` CLI on `PATH`
-   - an authenticated Codex/OpenAI session
+   - one supported summary CLI on `PATH`: `codex`, `claude`, `gemini`, or `pi`
+   - an authenticated session for that CLI
 
 ## Environment Variables
 
 Supported runtime environment variables:
 
+- `YT_TRANSCRIBER_CONFIG`
+  Override the runtime `config.json` path
 - `PYANNOTE_AUTH_TOKEN`
   Hugging Face token for gated pyannote diarization models
 - `HF_TOKEN`
@@ -116,6 +126,50 @@ Supported runtime environment variables:
   Directory containing whisper.cpp model files
 
 The CLI does not load a `.env` file by itself. These variables must already be present in the shell environment.
+
+## Runtime Config
+
+The CLI now treats a JSON config as the primary source of runtime defaults.
+
+Lookup order:
+- `yt-transcriber --config /path/to/config.json ...`
+- `$YT_TRANSCRIBER_CONFIG`
+- `~/.config/yt-transcriber/config.json`
+
+CLI flags still work, but they are now per-run overrides on top of the loaded config.
+
+Example config:
+
+```json
+{
+  "base_data_dir": "data/videos",
+  "language_preference": "en",
+  "default_asr_backend": "qwen3-asr",
+  "summary_provider": "pi",
+  "summary_profiles": {
+    "codex": {
+      "command": "codex",
+      "model": "gpt-5.4",
+      "thinking_level": "high"
+    },
+    "claude": {
+      "command": "claude",
+      "model": "claude-sonnet-4-5"
+    },
+    "gemini": {
+      "command": "gemini",
+      "model": "gemini-2.5-pro"
+    },
+    "pi": {
+      "command": "pi",
+      "model": "openai/gpt-5.4",
+      "thinking_level": "high"
+    }
+  }
+}
+```
+
+An example file is included at [config.example.json](config.example.json).
 
 ## Quick Start
 
@@ -135,6 +189,20 @@ Run the pipeline and summarize:
 
 ```bash
 yt-transcriber process "https://www.youtube.com/watch?v=..." --summarize
+```
+
+Use a specific config file for the whole run:
+
+```bash
+yt-transcriber --config ./config.json process "https://www.youtube.com/watch?v=..." --summarize
+```
+
+Temporarily override the configured summary CLI:
+
+```bash
+yt-transcriber process "https://www.youtube.com/watch?v=..." \
+  --summarize \
+  --summary-provider claude
 ```
 
 Enable diarization for multi-speaker audio:
@@ -157,30 +225,53 @@ Summarize an already-processed video:
 yt-transcriber summarize <youtube_id>
 ```
 
+Summarize with a specific config file:
+
+```bash
+yt-transcriber --config ./config.json summarize <youtube_id>
+```
+
+Override the configured Pi model for one run:
+
+```bash
+yt-transcriber summarize <youtube_id> \
+  --provider pi \
+  --model openai/gpt-5.4 \
+  --thinking-level high
+```
+
 ## Commands
 
 Available commands:
 
 ```bash
 yt-transcriber doctor
+yt-transcriber --config ./config.json doctor
 yt-transcriber process "<youtube-url>" --dry-run
 yt-transcriber process "<youtube-url>"
 yt-transcriber process "<youtube-url>" --summarize
+yt-transcriber --config ./config.json process "<youtube-url>" --summarize
+yt-transcriber process "<youtube-url>" --summarize --summary-provider claude
+yt-transcriber process "<youtube-url>" --summarize --summary-provider pi --summary-model openai/gpt-5.4 --summary-thinking-level high
 yt-transcriber process "<youtube-url>" --diarize
 yt-transcriber summarize <youtube_id>
+yt-transcriber --config ./config.json summarize <youtube_id>
+yt-transcriber summarize <youtube_id> --provider gemini
+yt-transcriber summarize <youtube_id> --provider pi --model openai/gpt-5.4 --thinking-level high
 yt-transcriber rechunk <youtube_id>
 yt-transcriber prepare-summary <youtube_id>
 ```
 
 Command behavior:
 - `doctor`
-  Shows environment status, installed Python packages, and auth-related readiness
+  Shows environment status, installed Python packages, auth-related readiness, and the loaded config path
 - `process --dry-run`
   Probes metadata and prints the planned source path without downloading media
 - `process`
   Runs the real subtitle or ASR pipeline
 - `summarize`
   Reuses existing chunk artifacts and generates chunk summaries plus `final.md`
+  `--summary-provider` / `--provider`, `--summary-model` / `--model`, and `--summary-thinking-level` / `--thinking-level` are per-run overrides on top of the loaded config
 - `rechunk`
   Regenerates chunk files from existing transcript segments
 - `prepare-summary`
@@ -200,8 +291,8 @@ YouTube URL
   -> transcript cleanup
   -> transcript chunks
   -> summary_input/payload.json
-  -> optional codex exec chunk summaries
-  -> optional codex exec final summary
+  -> optional summary CLI chunk summaries
+  -> optional summary CLI final summary
 ```
 
 Important policy decisions:
@@ -309,6 +400,9 @@ Use `--force` to recompute.
 - First runs can be slow because model weights may need to be downloaded from Hugging Face.
 - Long Qwen runs currently use `--quiet --no-progress`, so they can look idle even when they are still computing.
 - `whisper.cpp` is the safer fallback path if the Qwen stack is unavailable or unstable on a given machine.
+- Summary provider, command, model, and thinking level can all be set in `config.json`; CLI flags override only the selected provider for the current run.
+- The loaded runtime config comes from `--config`, then `$YT_TRANSCRIBER_CONFIG`, then `~/.config/yt-transcriber/config.json`.
+- `--summary-thinking-level` and `--thinking-level` are currently applied to providers that expose a comparable headless flag: `codex` and `pi`.
 - The `python3.11` and `yt-dlp` shell commands are convenient but not strictly required after the environment is built, because the runtime uses the active interpreter and the installed `yt_dlp` Python package.
 
 ## Code Map

@@ -6,7 +6,7 @@ import subprocess
 import textwrap
 from pathlib import Path
 
-from .config import PipelineConfig
+from .config import PipelineConfig, normalize_summary_provider
 from .manifest import initialize_workspace, resolve_artifact_paths
 from .models import (
     ChunkManifestEntry,
@@ -19,6 +19,7 @@ from .models import (
 from .utils import append_log, path_string, read_json, write_json, write_text
 
 FINAL_SUMMARY_WRAP_WIDTH = 80
+SUMMARY_STDIN_DIRECTIVE = "Follow the piped prompt exactly and output only the requested markdown. Do not use tools."
 FENCE_PATTERN = re.compile(r"^\s*(```|~~~)")
 LIST_ITEM_PATTERN = re.compile(r"^(\s*)([-*+]|\d+\.)\s+(.*)$")
 BLOCKQUOTE_PATTERN = re.compile(r"^(\s*>\s?)(.*)$")
@@ -28,11 +29,16 @@ def summarize_video(
     video_id: str,
     config: PipelineConfig,
     model: str | None = None,
+    thinking_level: str | None = None,
     force: bool = False,
 ) -> ProcessResult:
     paths = initialize_workspace(resolve_artifact_paths(config.base_data_dir, video_id))
     metadata = VideoMetadata.model_validate(read_json(paths.metadata_path))
     chunk_manifest = [ChunkManifestEntry.model_validate(item) for item in read_json(paths.chunk_index_path)]
+    summary_provider = normalize_summary_provider(config.summary_provider)
+    summary_command = config.summary_command or summary_provider
+    summary_model = model if model is not None else config.summary_model
+    summary_thinking_level = thinking_level if thinking_level is not None else config.summary_thinking_level
 
     if not chunk_manifest:
         raise RuntimeError("No chunk files are available to summarize.")
@@ -40,8 +46,13 @@ def summarize_video(
     manifest = _load_summary_manifest(paths.summary_manifest_path)
     manifest = _migrate_legacy_final_summary(paths, manifest)
     if manifest is not None and not force and paths.summary_final_path.exists():
-        if len(manifest.chunk_summaries) == len(chunk_manifest) and all(
-            (paths.root_dir / entry.output_path).exists() for entry in manifest.chunk_summaries
+        if (
+            manifest.summary_provider == summary_provider
+            and manifest.summary_command == summary_command
+            and manifest.summary_model == summary_model
+            and manifest.summary_thinking_level == summary_thinking_level
+            and len(manifest.chunk_summaries) == len(chunk_manifest)
+            and all((paths.root_dir / entry.output_path).exists() for entry in manifest.chunk_summaries)
         ):
             wrap_markdown_file(paths.summary_final_path, width=FINAL_SUMMARY_WRAP_WIDTH)
             summary_payload = SummaryPayload.model_validate(read_json(paths.summary_payload_path))
@@ -50,14 +61,13 @@ def summarize_video(
                 source_kind=summary_payload.source_kind,
                 artifact_root=paths.root_dir,
                 chunk_count=len(chunk_manifest),
-                notes=["Reused cached Codex summaries."],
+                notes=["Reused cached summaries."],
                 summary_manifest_path=path_string(paths.summary_manifest_path, paths.root_dir),
                 final_summary_path=path_string(paths.summary_final_path, paths.root_dir),
             )
 
-    append_log(paths.pipeline_log_path, f"Starting Codex summarization for {video_id}")
-    codex_model = model or config.codex_summary_model or "gpt-5.4"
-    codex_reasoning_effort = _codex_reasoning_effort_for_model(codex_model)
+    provider_label = _summary_provider_label(summary_provider)
+    append_log(paths.pipeline_log_path, f"Starting {provider_label} summarization for {video_id}")
     summary_entries: list[ChunkSummaryEntry] = []
     rendered_chunk_summaries: list[str] = []
 
@@ -70,13 +80,14 @@ def summarize_video(
         write_text(prompt_path, prompt)
 
         if force or not output_path.exists():
-            rendered = run_codex_exec(
+            rendered = run_summary_cli(
                 prompt=prompt,
                 output_path=output_path,
                 workdir=paths.root_dir,
-                codex_command=config.codex_command,
-                model=codex_model,
-                reasoning_effort=codex_reasoning_effort,
+                provider=summary_provider,
+                command=summary_command,
+                model=summary_model,
+                thinking_level=summary_thinking_level,
             )
             append_log(paths.pipeline_log_path, f"Summarized chunk {chunk.index}")
         else:
@@ -101,21 +112,23 @@ def summarize_video(
     )
     write_text(paths.summary_final_prompt_path, final_prompt)
     if force or not paths.summary_final_path.exists():
-        run_codex_exec(
+        run_summary_cli(
             prompt=final_prompt,
             output_path=paths.summary_final_path,
             workdir=paths.root_dir,
-            codex_command=config.codex_command,
-            model=codex_model,
-            reasoning_effort=codex_reasoning_effort,
+            provider=summary_provider,
+            command=summary_command,
+            model=summary_model,
+            thinking_level=summary_thinking_level,
         )
-        append_log(paths.pipeline_log_path, "Wrote final Codex summary")
+        append_log(paths.pipeline_log_path, f"Wrote final {provider_label} summary")
 
     summary_manifest = SummaryManifest(
         video_id=video_id,
-        codex_command=config.codex_command,
-        codex_model=codex_model,
-        codex_reasoning_effort=codex_reasoning_effort,
+        summary_provider=summary_provider,
+        summary_command=summary_command,
+        summary_model=summary_model,
+        summary_thinking_level=summary_thinking_level,
         chunk_summaries=summary_entries,
         final_prompt_path=path_string(paths.summary_final_prompt_path, paths.root_dir),
         final_summary_path=path_string(paths.summary_final_path, paths.root_dir),
@@ -129,7 +142,7 @@ def summarize_video(
         source_kind=summary_payload.source_kind,
         artifact_root=paths.root_dir,
         chunk_count=len(chunk_manifest),
-        notes=["Codex chunk summaries and final summary created."],
+        notes=[f"{provider_label} chunk summaries and final summary created."],
         summary_manifest_path=path_string(paths.summary_manifest_path, paths.root_dir),
         final_summary_path=path_string(paths.summary_final_path, paths.root_dir),
     )
@@ -218,48 +231,134 @@ Chunk summaries:
 """
 
 
-def run_codex_exec(
+def run_summary_cli(
     prompt: str,
     output_path: Path,
     workdir: Path,
-    codex_command: str,
+    provider: str,
+    command: str,
     model: str | None = None,
-    reasoning_effort: str | None = None,
+    thinking_level: str | None = None,
 ) -> str:
-    if shutil.which(codex_command) is None:
-        raise RuntimeError(f"{codex_command} is not available on PATH.")
+    normalized_provider = normalize_summary_provider(provider)
+    if shutil.which(command) is None:
+        raise RuntimeError(f"{command} is not available on PATH.")
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    command = [
-        codex_command,
-        "exec",
-        "--skip-git-repo-check",
-        "--sandbox",
-        "read-only",
-        "--ephemeral",
-        "-C",
-        str(workdir),
-        "-o",
-        str(output_path),
-    ]
-    if model:
-        command.extend(["--model", model])
-    if reasoning_effort:
-        command.extend(["-c", f'model_reasoning_effort="{reasoning_effort}"'])
+    cli_command, writes_to_stdout = _build_summary_command(
+        provider=normalized_provider,
+        command=command,
+        model=model,
+        thinking_level=thinking_level,
+        workdir=workdir,
+        output_path=output_path,
+    )
 
     completed = subprocess.run(
-        command,
+        cli_command,
+        cwd=workdir,
         input=prompt,
         capture_output=True,
         text=True,
         check=False,
     )
     if completed.returncode != 0:
-        error_text = completed.stderr.strip() or completed.stdout.strip() or "codex exec exited with a non-zero status."
+        provider_label = _summary_provider_label(normalized_provider)
+        error_text = (
+            completed.stderr.strip()
+            or completed.stdout.strip()
+            or f"{provider_label} exited with a non-zero status."
+        )
         raise RuntimeError(error_text)
+    if writes_to_stdout:
+        rendered = completed.stdout.strip()
+        if not rendered:
+            raise RuntimeError(
+                completed.stderr.strip() or f"{_summary_provider_label(normalized_provider)} did not produce any text."
+            )
+        write_text(output_path, rendered + "\n")
     if not output_path.exists():
-        raise RuntimeError(f"codex exec completed without writing {output_path}")
+        raise RuntimeError(f"{_summary_provider_label(normalized_provider)} completed without writing {output_path}")
     return output_path.read_text(encoding="utf-8").strip()
+
+
+def _build_summary_command(
+    *,
+    provider: str,
+    command: str,
+    model: str | None,
+    thinking_level: str | None,
+    workdir: Path,
+    output_path: Path,
+) -> tuple[list[str], bool]:
+    if provider == "codex":
+        command_parts = [
+            command,
+            "exec",
+            "--skip-git-repo-check",
+            "--sandbox",
+            "read-only",
+            "--ephemeral",
+            "-C",
+            str(workdir),
+            "-o",
+            str(output_path),
+        ]
+        if model:
+            command_parts.extend(["--model", model])
+        if thinking_level:
+            command_parts.extend(["-c", f'model_reasoning_effort="{thinking_level}"'])
+        return command_parts, False
+
+    if provider == "claude":
+        command_parts = [
+            command,
+            "--print",
+            SUMMARY_STDIN_DIRECTIVE,
+            "--output-format",
+            "text",
+            "--no-session-persistence",
+            "--permission-mode",
+            "default",
+            "--bare",
+            "--max-turns",
+            "1",
+            "--tools",
+            "",
+        ]
+        if model:
+            command_parts.extend(["--model", model])
+        return command_parts, True
+
+    if provider == "gemini":
+        command_parts = [
+            command,
+            "--prompt",
+            SUMMARY_STDIN_DIRECTIVE,
+            "--output-format",
+            "text",
+            "--approval-mode",
+            "default",
+        ]
+        if model:
+            command_parts.extend(["--model", model])
+        return command_parts, True
+
+    if provider == "pi":
+        command_parts = [
+            command,
+            "-p",
+            SUMMARY_STDIN_DIRECTIVE,
+            "--no-session",
+            "--no-tools",
+        ]
+        if model:
+            command_parts.extend(["--model", model])
+        if thinking_level:
+            command_parts.extend(["--thinking", thinking_level])
+        return command_parts, True
+
+    raise ValueError(f"Unsupported summary provider: {provider}")
 
 
 def _load_summary_manifest(path: Path) -> SummaryManifest | None:
@@ -299,10 +398,14 @@ def _migrate_legacy_final_summary(
     return updated_manifest
 
 
-def _codex_reasoning_effort_for_model(model: str | None) -> str | None:
-    if model == "gpt-5.4":
-        return "high"
-    return None
+def _summary_provider_label(provider: str) -> str:
+    labels = {
+        "claude": "Claude Code",
+        "codex": "Codex",
+        "gemini": "Gemini CLI",
+        "pi": "Pi",
+    }
+    return labels.get(provider, provider)
 
 
 def wrap_markdown_file(path: Path, width: int = FINAL_SUMMARY_WRAP_WIDTH) -> bool:

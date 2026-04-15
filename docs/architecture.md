@@ -28,7 +28,7 @@ CLI
   -> build transcript artifacts
   -> chunk transcript
   -> write summary handoff payload
-  -> optionally summarize via codex
+  -> optionally summarize via a supported summary CLI
 ```
 
 Expanded:
@@ -54,8 +54,8 @@ YouTube URL
   -> write raw.txt / clean.txt / segments.json / transcript.srt
   -> chunk transcript into chunk-*.txt
   -> write summary_input/payload.json
-  -> optional codex exec chunk summaries
-  -> optional codex exec final summary
+  -> optional summary CLI chunk summaries
+  -> optional summary CLI final summary
 ```
 
 ## Module Responsibilities
@@ -70,6 +70,9 @@ Defines the public commands:
 - `summarize`
 - `rechunk`
 - `prepare-summary`
+
+It also exposes a global `--config` option so commands can load a runtime `config.json`
+before applying any per-run overrides.
 
 It also validates flag combinations such as:
 - `--summarize` cannot be used with `--dry-run`
@@ -86,13 +89,37 @@ Holds the runtime defaults:
 - chunk size
 - tool command names
 
+Runtime config is loaded in this order:
+- `--config /path/to/config.json`
+- `YT_TRANSCRIBER_CONFIG`
+- `~/.config/yt-transcriber/config.json`
+- built-in defaults only when no file is present
+
 The current effective defaults are:
 - backend: `qwen3-asr`
 - Qwen model: `mlx-community/Qwen3-ASR-1.7B-8bit`
 - aligner: `Qwen/Qwen3-ForcedAligner-0.6B`
 - diarization model: `pyannote/speaker-diarization-community-1`
 - fallback backend: `whisper-cpp`
-- summary model: `gpt-5.4`
+- default summary provider: `codex`
+- default Codex summary model: `gpt-5.4`
+- default Codex thinking level: `high`
+
+Summary CLI settings are stored per provider in `PipelineConfig.summary_profiles`.
+
+Each provider profile can define:
+- command
+- model
+- thinking level
+
+The selected provider is exposed through:
+- `summary_provider`
+- `summary_command`
+- `summary_model`
+- `summary_thinking_level`
+
+CLI flags like `--summary-provider`, `--summary-model`, and `--thinking-level` now
+act only as per-run overrides on top of the loaded config.
 
 ### Download And Probe
 
@@ -242,15 +269,18 @@ This is the only non-local part of the pipeline.
 Flow:
 - read chunk index
 - build a prompt per chunk
-- call `codex exec`
+- call the selected summary CLI
 - write `summary/chunk-*.md`
 - build a final synthesis prompt
-- call `codex exec` again
+- call the selected summary CLI again
 - write `final.md`
 
 Summary settings:
-- default model: `gpt-5.4`
-- reasoning effort: `high` when using `gpt-5.4`
+- supported providers: `codex`, `claude`, `gemini`, `pi`
+- default provider: `codex`
+- default Codex model: `gpt-5.4`
+- default Codex thinking level: `high`
+- thinking-level passthrough is currently implemented for `codex` and `pi`
 
 The prompts are currently detail-preserving and technical by default.
 
@@ -315,7 +345,7 @@ Not every file appears on every run:
 
 ### Not Local
 
-- `codex exec` summarization
+- summary CLI summarization
 
 ### Gated Downloads
 
@@ -328,7 +358,8 @@ Not every file appears on every run:
 - Long Qwen runs use `--quiet --no-progress`, so they can look stuck even when they are still computing.
 - First runs can be slow because the models may need to be downloaded and cached.
 - `whisper.cpp` is the operational fallback when the Qwen stack is unavailable or unstable.
-- The current summary step assumes Codex CLI auth is already configured outside this repo.
+- The current summary step assumes one supported summary CLI is installed and authenticated outside this repo.
+- `claude` and `gemini` do not currently receive a headless thinking-level CLI flag from this repo because their official CLI docs do not expose the same level-based control as `codex` and `pi`.
 
 ## Public-Repo Replication Checklist
 
@@ -339,7 +370,7 @@ For a new user to reproduce the workflow successfully, they need:
 - `uv sync --group dev --python 3.11`
 - optional `whisper-cli` if they want the fallback backend
 - accepted Hugging Face terms plus token if they want diarization
-- authenticated `codex` CLI if they want summarization
+- authenticated `codex`, `claude`, `gemini`, or `pi` CLI if they want summarization
 
 The most important user-facing command to verify after setup is:
 

@@ -11,7 +11,14 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from .config import PipelineConfig, normalize_asr_backend
+from .config import (
+    CONFIG_ENV_VAR,
+    PipelineConfig,
+    default_config_path,
+    load_pipeline_config,
+    normalize_asr_backend,
+    normalize_summary_provider,
+)
 from .pipeline import prepare_summary_input, process_video, rechunk_video
 from .summarize import summarize_video
 from .transcribe import describe_qwen_command
@@ -20,9 +27,50 @@ app = typer.Typer(help="Local YouTube transcript preparation pipeline.")
 console = Console()
 
 
+@app.callback()
+def main_callback(
+    ctx: typer.Context,
+    config: Path | None = typer.Option(
+        None,
+        "--config",
+        help=(
+            f"Path to runtime config.json. Defaults to ${CONFIG_ENV_VAR} or "
+            f"{default_config_path()} when present."
+        ),
+    ),
+) -> None:
+    ctx.obj = {"config_path": config}
+
+
+def _find_command_location(command: str | None) -> str | None:
+    if not command:
+        return None
+    resolved = shutil.which(command)
+    if resolved:
+        return resolved
+    candidate = Path(command).expanduser()
+    if candidate.exists():
+        return str(candidate)
+    return None
+
+
+def _load_runtime_config(
+    ctx: typer.Context,
+    *,
+    overrides: dict[str, object] | None = None,
+) -> tuple[PipelineConfig, Path | None]:
+    config_path = ctx.obj.get("config_path") if ctx.obj else None
+    try:
+        return load_pipeline_config(config_path=config_path, overrides=overrides)
+    except (FileNotFoundError, ValueError) as exc:
+        if config_path is not None:
+            raise typer.BadParameter(str(exc), param_hint="--config") from exc
+        raise typer.BadParameter(str(exc)) from exc
+
+
 @app.command()
-def doctor() -> None:
-    config = PipelineConfig()
+def doctor(ctx: typer.Context) -> None:
+    config, resolved_config_path = _load_runtime_config(ctx)
     table = Table(title="Environment Check")
     table.add_column("Item")
     table.add_column("Status")
@@ -40,10 +88,18 @@ def doctor() -> None:
         ("yt-dlp command", shutil.which("yt-dlp"), "optional; runtime uses the installed yt_dlp Python package"),
         ("mlx-qwen3-asr command", shutil.which("mlx-qwen3-asr"), "optional; the wrapper is the default path"),
         ("whisper-cli", shutil.which("whisper-cli"), "optional; only needed for the whisper.cpp fallback"),
-        ("codex", shutil.which("codex"), "optional; only needed for summarize"),
         ("uv", shutil.which("uv"), "optional; setup helper"),
         ("brew", shutil.which("brew"), "optional; setup helper on macOS"),
     ]
+    for provider, profile in config.summary_profiles.items():
+        location = _find_command_location(profile.command)
+        command_rows.append(
+            (
+                f"summary CLI ({provider})",
+                location,
+                f"configured as {profile.command}",
+            )
+        )
     for name, location, description in command_rows:
         status = "ok" if location else "optional"
         detail = location or description
@@ -79,30 +135,33 @@ def doctor() -> None:
 
     console.print(table)
     console.print(f"Interpreter: {platform.python_version()}")
+    console.print(f"Config: {resolved_config_path or 'built-in defaults'}")
     console.print(f"Data root: {config.base_data_dir}")
+    console.print(f"Default summary provider: {config.summary_provider}")
     console.print("Notes:")
-    console.print("- The transcript pipeline is local; Codex is only required for summarization.")
+    console.print("- The transcript pipeline is local; summarization requires one supported summary CLI.")
     console.print("- The yt_dlp Python package is what the runtime uses; the yt-dlp shell command is optional.")
     console.print("- The pyannote token is only required for diarization.")
 
 
 @app.command()
 def process(
+    ctx: typer.Context,
     url: str,
-    language: str = typer.Option(
-        "en",
-        help="Preferred subtitle/transcription language. Defaults to explicit English for the qwen3-asr path; use 'auto' only if you want ASR language detection.",
+    language: str | None = typer.Option(
+        None,
+        help="Override the preferred subtitle/transcription language for this run. Defaults to the config value.",
     ),
     high_quality: bool = typer.Option(False, help="Use the highest-accuracy transcription profile for the selected backend."),
     force: bool = typer.Option(False, help="Ignore cached artifacts and recompute the pipeline."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Probe metadata and print the planned branch without downloading media."),
-    asr_backend: str = typer.Option(
-        "qwen3-asr",
-        help="ASR backend to use when creator subtitles are unavailable. qwen3-asr is the default path; whisper-cpp remains the fallback/safe option.",
+    asr_backend: str | None = typer.Option(
+        None,
+        help="Override the ASR backend for this run. Defaults to the config value.",
     ),
     model: str | None = typer.Option(
         None,
-        help="Override the ASR model alias or path for the selected backend.",
+        help="Override the ASR model alias or path for this run.",
     ),
     threads: int | None = typer.Option(
         None,
@@ -130,41 +189,71 @@ def process(
     ),
     summarize: bool = typer.Option(
         False,
-        help="Run Codex headless summarization after the local transcript pipeline finishes.",
+        help="Run headless summarization after the local transcript pipeline finishes.",
+    ),
+    summary_provider: str | None = typer.Option(
+        None,
+        help="Override the summary CLI for this run: codex, claude, gemini, or pi.",
+    ),
+    summary_command: str | None = typer.Option(
+        None,
+        help="Override the summary CLI executable name or path for this run.",
     ),
     summary_model: str | None = typer.Option(
         None,
-        help="Override the Codex model used for chunk summaries and the final synthesis pass.",
+        help="Override the model passed to the selected summary CLI for this run.",
+    ),
+    summary_thinking_level: str | None = typer.Option(
+        None,
+        help="Override the thinking or reasoning level passed to the selected summary CLI for this run when supported.",
     ),
     whisper_cpp_model: Path | None = typer.Option(
         None,
         help="Path to an exact whisper.cpp model file. Overrides model alias resolution and WHISPER_CPP_MODEL.",
     ),
-    data_dir: Path = typer.Option(
-        Path("data/videos"),
-        help="Artifact root directory.",
+    data_dir: Path | None = typer.Option(
+        None,
+        help="Override the artifact root directory for this run.",
     ),
-    ) -> None:
+) -> None:
     if dry_run and summarize:
         raise typer.BadParameter("--summarize cannot be used with --dry-run.")
     if max_speakers < min_speakers:
         raise typer.BadParameter("--max-speakers must be >= --min-speakers.")
-    try:
-        normalized_asr_backend = normalize_asr_backend(asr_backend)
-    except ValueError as exc:
-        raise typer.BadParameter(str(exc)) from exc
+    normalized_asr_backend: str | None = None
+    if asr_backend is not None:
+        try:
+            normalized_asr_backend = normalize_asr_backend(asr_backend)
+        except ValueError as exc:
+            raise typer.BadParameter(str(exc)) from exc
+    normalized_summary_provider: str | None = None
+    if summary_provider is not None:
+        try:
+            normalized_summary_provider = normalize_summary_provider(summary_provider)
+        except ValueError as exc:
+            raise typer.BadParameter(str(exc)) from exc
     if normalized_asr_backend == "whisper-cpp" and diarize:
         raise typer.BadParameter("--diarize is only supported with --asr-backend qwen3-asr.")
-
-    base_config = PipelineConfig()
-    config = base_config.model_copy(
-        update={
-            "base_data_dir": data_dir,
-            "whisper_cpp_model_path": whisper_cpp_model or base_config.whisper_cpp_model_path,
-            "whisper_cpp_threads": threads or base_config.whisper_cpp_threads,
-            "codex_summary_model": summary_model or base_config.codex_summary_model,
-        }
-    )
+    config_overrides: dict[str, object] = {}
+    if data_dir is not None:
+        config_overrides["base_data_dir"] = data_dir
+    if whisper_cpp_model is not None:
+        config_overrides["whisper_cpp_model_path"] = whisper_cpp_model
+    if threads is not None:
+        config_overrides["whisper_cpp_threads"] = threads
+    if normalized_summary_provider is not None:
+        config_overrides["summary_provider"] = normalized_summary_provider
+    if summary_command is not None:
+        config_overrides["summary_command"] = summary_command
+    if summary_model is not None:
+        config_overrides["summary_model"] = summary_model
+    if summary_thinking_level is not None:
+        config_overrides["summary_thinking_level"] = summary_thinking_level
+    config, resolved_config_path = _load_runtime_config(ctx, overrides=config_overrides)
+    effective_asr_backend = normalized_asr_backend or config.default_asr_backend
+    effective_summary_provider = config.summary_provider
+    if effective_asr_backend == "whisper-cpp" and diarize:
+        raise typer.BadParameter("--diarize is only supported with the qwen3-asr backend.")
     result = process_video(
         url=url,
         config=config,
@@ -185,6 +274,7 @@ def process(
             video_id=result.metadata.video_id,
             config=config,
             model=summary_model,
+            thinking_level=summary_thinking_level,
             force=force,
         )
         result = result.model_copy(
@@ -205,6 +295,12 @@ def process(
     summary.add_row("force", str(force))
     summary.add_row("cached", str(result.used_cache))
     summary.add_row("chunk_count", str(result.chunk_count))
+    summary.add_row("config", str(resolved_config_path or "built-in defaults"))
+    summary.add_row("asr_backend", effective_asr_backend)
+    if summarize:
+        summary.add_row("summary_provider", effective_summary_provider)
+        summary.add_row("summary_model", config.summary_model or "default")
+        summary.add_row("summary_thinking_level", config.summary_thinking_level or "default")
     if result.transcription is not None:
         summary.add_row("transcription_backend", result.transcription.backend or "n/a")
         summary.add_row("transcription_model", result.transcription.model or "n/a")
@@ -234,20 +330,24 @@ def process(
 
 @app.command()
 def rechunk(
+    ctx: typer.Context,
     video_id: str,
-    data_dir: Path = typer.Option(Path("data/videos"), help="Artifact root directory."),
+    data_dir: Path | None = typer.Option(None, help="Override the artifact root directory for this run."),
 ) -> None:
-    config = PipelineConfig(base_data_dir=data_dir)
+    overrides = {"base_data_dir": data_dir} if data_dir is not None else None
+    config, _ = _load_runtime_config(ctx, overrides=overrides)
     result = rechunk_video(video_id=video_id, config=config)
     console.print(f"Rechunked {result.metadata.video_id} into {result.chunk_count} chunks at {result.artifact_root}.")
 
 
 @app.command("prepare-summary")
 def prepare_summary(
+    ctx: typer.Context,
     video_id: str,
-    data_dir: Path = typer.Option(Path("data/videos"), help="Artifact root directory."),
+    data_dir: Path | None = typer.Option(None, help="Override the artifact root directory for this run."),
 ) -> None:
-    config = PipelineConfig(base_data_dir=data_dir)
+    overrides = {"base_data_dir": data_dir} if data_dir is not None else None
+    config, _ = _load_runtime_config(ctx, overrides=overrides)
     result = prepare_summary_input(video_id=video_id, config=config)
     console.print(
         f"Prepared summary payload for {result.metadata.video_id} with {result.chunk_count} chunks at {result.artifact_root}."
@@ -256,13 +356,37 @@ def prepare_summary(
 
 @app.command()
 def summarize(
+    ctx: typer.Context,
     video_id: str,
     force: bool = typer.Option(False, help="Regenerate chunk summaries and the final summary."),
-    model: str | None = typer.Option(None, help="Override the Codex model used for summarization."),
-    data_dir: Path = typer.Option(Path("data/videos"), help="Artifact root directory."),
+    provider: str | None = typer.Option(None, help="Override the summary CLI for this run: codex, claude, gemini, or pi."),
+    summary_command: str | None = typer.Option(None, help="Override the summary CLI executable name or path for this run."),
+    model: str | None = typer.Option(None, help="Override the model passed to the selected summary CLI for this run."),
+    thinking_level: str | None = typer.Option(
+        None,
+        help="Override the thinking or reasoning level passed to the selected summary CLI for this run when supported.",
+    ),
+    data_dir: Path | None = typer.Option(None, help="Override the artifact root directory for this run."),
 ) -> None:
-    config = PipelineConfig(base_data_dir=data_dir, codex_summary_model=model)
-    result = summarize_video(video_id=video_id, config=config, model=model, force=force)
+    normalized_provider: str | None = None
+    if provider is not None:
+        try:
+            normalized_provider = normalize_summary_provider(provider)
+        except ValueError as exc:
+            raise typer.BadParameter(str(exc)) from exc
+    config_overrides: dict[str, object] = {}
+    if data_dir is not None:
+        config_overrides["base_data_dir"] = data_dir
+    if normalized_provider is not None:
+        config_overrides["summary_provider"] = normalized_provider
+    if summary_command is not None:
+        config_overrides["summary_command"] = summary_command
+    if model is not None:
+        config_overrides["summary_model"] = model
+    if thinking_level is not None:
+        config_overrides["summary_thinking_level"] = thinking_level
+    config, _ = _load_runtime_config(ctx, overrides=config_overrides)
+    result = summarize_video(video_id=video_id, config=config, model=model, thinking_level=thinking_level, force=force)
     console.print(f"Summarized {result.metadata.video_id} into {result.final_summary_path}.")
 
 

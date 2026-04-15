@@ -3,14 +3,22 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
-from youtube_local_pipeline.config import PipelineConfig
+from youtube_local_pipeline.config import (
+    CONFIG_ENV_VAR,
+    PipelineConfig,
+    SummaryHarnessConfig,
+    default_config_path,
+    load_pipeline_config,
+    normalize_summary_provider,
+    resolve_config_path,
+)
 from youtube_local_pipeline.download import choose_subtitle_candidate
 from youtube_local_pipeline.manifest import build_artifact_paths, initialize_workspace, resolve_video_root
 from youtube_local_pipeline.models import SourceKind, TranscriptSegment, TranscriptionDetails, VideoMetadata
 from youtube_local_pipeline.pipeline import _transcription_details_match, process_video
 from youtube_local_pipeline.qwen_cli import apply_mlx_qwen3_asr_patch
 from youtube_local_pipeline.subtitles import load_segments, write_transcript_artifacts
-from youtube_local_pipeline.summarize import summarize_video, wrap_markdown_text
+from youtube_local_pipeline.summarize import _build_summary_command, summarize_video, wrap_markdown_text
 from youtube_local_pipeline.transcribe import (
     TranscriptionRequest,
     resolve_whisper_cpp_model_path,
@@ -398,6 +406,169 @@ def test_transcription_details_match_rejects_cached_backend_mismatch() -> None:
     assert _transcription_details_match(cached, requested) is False
 
 
+def test_normalize_summary_provider_accepts_common_aliases() -> None:
+    assert normalize_summary_provider("codex") == "codex"
+    assert normalize_summary_provider("openai") == "codex"
+    assert normalize_summary_provider("claude-code") == "claude"
+    assert normalize_summary_provider("anthropic") == "claude"
+    assert normalize_summary_provider("gemini-cli") == "gemini"
+    assert normalize_summary_provider("google") == "gemini"
+    assert normalize_summary_provider("pi-agent") == "pi"
+
+
+def test_pipeline_config_resolves_provider_specific_summary_profile() -> None:
+    config = PipelineConfig(
+        summary_provider="pi",
+        summary_profiles={
+            "pi": SummaryHarnessConfig(
+                command="pi-custom",
+                model="openai/gpt-5.4",
+                thinking_level="high",
+            )
+        },
+    )
+
+    assert config.summary_command == "pi-custom"
+    assert config.summary_model == "openai/gpt-5.4"
+    assert config.summary_thinking_level == "high"
+    assert config.summary_harness("pi").command == "pi-custom"
+    assert config.summary_harness("pi").model == "openai/gpt-5.4"
+    assert config.summary_harness("pi").thinking_level == "high"
+    assert config.summary_harness("codex").model == "gpt-5.4"
+    assert config.summary_harness("codex").thinking_level == "high"
+
+
+def test_resolve_config_path_prefers_env_and_default_locations(monkeypatch, tmp_path: Path) -> None:
+    env_config = tmp_path / "env-config.json"
+    monkeypatch.setenv(CONFIG_ENV_VAR, str(env_config))
+
+    assert resolve_config_path() == env_config
+
+    monkeypatch.delenv(CONFIG_ENV_VAR)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    expected_default_path = default_config_path()
+    expected_default_path.parent.mkdir(parents=True, exist_ok=True)
+    write_text(expected_default_path, "{}\n")
+
+    assert resolve_config_path() == expected_default_path
+
+
+def test_load_pipeline_config_reads_json_and_applies_overrides(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.json"
+    write_json(
+        config_path,
+        {
+            "default_asr_backend": "whisper",
+            "summary_provider": "codex",
+            "summary_profiles": {
+                "codex": {
+                    "command": "codex-custom",
+                    "model": "gpt-5.4",
+                    "thinking_level": "medium",
+                },
+                "pi": {
+                    "command": "pi-custom",
+                    "model": "openai/gpt-5.4",
+                    "thinking_level": "high",
+                },
+            },
+        },
+    )
+
+    config, resolved_path = load_pipeline_config(
+        config_path=config_path,
+        overrides={
+            "summary_provider": "pi",
+            "summary_model": "openai/gpt-5.5",
+        },
+    )
+
+    assert resolved_path == config_path
+    assert config.default_asr_backend == "whisper-cpp"
+    assert config.summary_provider == "pi"
+    assert config.summary_command == "pi-custom"
+    assert config.summary_model == "openai/gpt-5.5"
+    assert config.summary_thinking_level == "high"
+
+
+def test_build_summary_command_for_claude_disables_tools() -> None:
+    command, writes_to_stdout = _build_summary_command(
+        provider="claude",
+        command="claude",
+        model="claude-sonnet-4-5",
+        thinking_level=None,
+        workdir=Path("/tmp/workdir"),
+        output_path=Path("/tmp/workdir/out.md"),
+    )
+
+    assert writes_to_stdout is True
+    assert command == [
+        "claude",
+        "--print",
+        "Follow the piped prompt exactly and output only the requested markdown. Do not use tools.",
+        "--output-format",
+        "text",
+        "--no-session-persistence",
+        "--permission-mode",
+        "default",
+        "--bare",
+        "--max-turns",
+        "1",
+        "--tools",
+        "",
+        "--model",
+        "claude-sonnet-4-5",
+    ]
+
+
+def test_build_summary_command_for_gemini_uses_noninteractive_prompt_mode() -> None:
+    command, writes_to_stdout = _build_summary_command(
+        provider="gemini",
+        command="gemini",
+        model="gemini-2.5-pro",
+        thinking_level=None,
+        workdir=Path("/tmp/workdir"),
+        output_path=Path("/tmp/workdir/out.md"),
+    )
+
+    assert writes_to_stdout is True
+    assert command == [
+        "gemini",
+        "--prompt",
+        "Follow the piped prompt exactly and output only the requested markdown. Do not use tools.",
+        "--output-format",
+        "text",
+        "--approval-mode",
+        "default",
+        "--model",
+        "gemini-2.5-pro",
+    ]
+
+
+def test_build_summary_command_for_pi_uses_print_mode_and_thinking_level() -> None:
+    command, writes_to_stdout = _build_summary_command(
+        provider="pi",
+        command="pi",
+        model="openai/gpt-5.4",
+        thinking_level="high",
+        workdir=Path("/tmp/workdir"),
+        output_path=Path("/tmp/workdir/out.md"),
+    )
+
+    assert writes_to_stdout is True
+    assert command == [
+        "pi",
+        "-p",
+        "Follow the piped prompt exactly and output only the requested markdown. Do not use tools.",
+        "--no-session",
+        "--no-tools",
+        "--model",
+        "openai/gpt-5.4",
+        "--thinking",
+        "high",
+    ]
+
+
 def test_summarize_video_writes_chunk_and_final_outputs(monkeypatch, tmp_path: Path) -> None:
     paths = initialize_workspace(build_artifact_paths(tmp_path / "video123", "video123"))
     metadata = VideoMetadata(
@@ -442,23 +613,31 @@ def test_summarize_video_writes_chunk_and_final_outputs(monkeypatch, tmp_path: P
         },
     )
 
-    captured_reasoning_efforts: list[str | None] = []
+    captured_summary_calls: list[dict[str, str | None]] = []
 
-    def fake_run_codex_exec(
+    def fake_run_summary_cli(
         prompt: str,
         output_path: Path,
         workdir: Path,
-        codex_command: str,
+        provider: str,
+        command: str,
         model: str | None = None,
-        reasoning_effort: str | None = None,
+        thinking_level: str | None = None,
     ) -> str:
-        captured_reasoning_efforts.append(reasoning_effort)
+        captured_summary_calls.append(
+            {
+                "provider": provider,
+                "command": command,
+                "model": model,
+                "thinking_level": thinking_level,
+            }
+        )
         if "Combine these chunk summaries" in prompt:
             content = (
                 "# Final Summary\n\n"
-                "This is a deliberately long final summary paragraph that should be wrapped "
-                "by the pipeline after Codex finishes writing the final markdown file so that "
-                "no prose line exceeds the configured maximum width.\n\n"
+                "This is a deliberately long final summary paragraph that should be wrapped by "
+                "the pipeline after the summary CLI finishes writing the final markdown file so "
+                "that no prose line exceeds the configured maximum width.\n\n"
                 "## Main Takeaways\n"
                 "- This bullet point is also deliberately long so the wrapper has to reflow "
                 "it instead of leaving a single oversized markdown list line in place.\n\n"
@@ -472,18 +651,36 @@ def test_summarize_video_writes_chunk_and_final_outputs(monkeypatch, tmp_path: P
         write_text(output_path, content + "\n")
         return content
 
-    monkeypatch.setattr("youtube_local_pipeline.summarize.run_codex_exec", fake_run_codex_exec)
+    monkeypatch.setattr("youtube_local_pipeline.summarize.run_summary_cli", fake_run_summary_cli)
 
     result = summarize_video(
         video_id="video123",
-        config=PipelineConfig(base_data_dir=tmp_path, codex_summary_model="gpt-5.4"),
+        config=PipelineConfig(base_data_dir=tmp_path),
     )
 
     assert result.final_summary_path == "final.md"
     assert result.summary_manifest_path == "summary/manifest.json"
     assert paths.summary_final_path.exists()
     assert paths.summary_manifest_path.exists()
-    assert captured_reasoning_efforts == ["high", "high"]
+    assert captured_summary_calls == [
+        {
+            "provider": "codex",
+            "command": "codex",
+            "model": "gpt-5.4",
+            "thinking_level": "high",
+        },
+        {
+            "provider": "codex",
+            "command": "codex",
+            "model": "gpt-5.4",
+            "thinking_level": "high",
+        },
+    ]
+    manifest = read_json(paths.summary_manifest_path)
+    assert manifest["summary_provider"] == "codex"
+    assert manifest["summary_command"] == "codex"
+    assert manifest["summary_model"] == "gpt-5.4"
+    assert manifest["summary_thinking_level"] == "high"
     assert all(len(line) <= 80 for line in paths.summary_final_path.read_text(encoding="utf-8").splitlines())
 
 
@@ -556,13 +753,16 @@ def test_summarize_video_migrates_legacy_final_summary_without_rerunning_codex(t
 
     result = summarize_video(
         video_id="video123",
-        config=PipelineConfig(base_data_dir=tmp_path, codex_summary_model="gpt-5.4"),
+        config=PipelineConfig(base_data_dir=tmp_path),
     )
 
     assert result.final_summary_path == "final.md"
     assert paths.summary_final_path.read_text(encoding="utf-8") == "# Final Summary\n\nLegacy summary.\n"
     assert not (paths.summary_dir / "final.md").exists()
-    assert read_json(paths.summary_manifest_path)["final_summary_path"] == "final.md"
+    manifest = read_json(paths.summary_manifest_path)
+    assert manifest["final_summary_path"] == "final.md"
+    assert manifest["summary_provider"] == "codex"
+    assert manifest["summary_command"] == "codex"
 
 
 def test_wrap_markdown_text_wraps_paragraphs_and_bullets_to_80_columns() -> None:
