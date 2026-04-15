@@ -17,7 +17,7 @@ from youtube_local_pipeline.transcribe import (
     resolve_qwen_command_args,
     transcribe_audio_file,
 )
-from youtube_local_pipeline.utils import write_json, write_text
+from youtube_local_pipeline.utils import read_json, write_json, write_text
 
 
 def test_choose_subtitle_candidate_prefers_manual_english_first() -> None:
@@ -479,12 +479,90 @@ def test_summarize_video_writes_chunk_and_final_outputs(monkeypatch, tmp_path: P
         config=PipelineConfig(base_data_dir=tmp_path, codex_summary_model="gpt-5.4"),
     )
 
-    assert result.final_summary_path == "summary/final.md"
+    assert result.final_summary_path == "final.md"
     assert result.summary_manifest_path == "summary/manifest.json"
     assert paths.summary_final_path.exists()
     assert paths.summary_manifest_path.exists()
     assert captured_reasoning_efforts == ["high", "high"]
     assert all(len(line) <= 80 for line in paths.summary_final_path.read_text(encoding="utf-8").splitlines())
+
+
+def test_summarize_video_migrates_legacy_final_summary_without_rerunning_codex(tmp_path: Path) -> None:
+    paths = initialize_workspace(build_artifact_paths(tmp_path / "video123", "video123"))
+    metadata = VideoMetadata(
+        video_id="video123",
+        url="https://www.youtube.com/watch?v=video123",
+        title="Summary Test",
+        channel="Example Channel",
+        duration_sec=42.0,
+        subtitles={"en": []},
+    )
+    write_json(paths.metadata_path, metadata.model_dump(mode="json"))
+    write_json(
+        paths.chunk_index_path,
+        [
+            {
+                "index": 1,
+                "start_sec": 0.0,
+                "end_sec": 12.0,
+                "path": "chunks/chunk-001.txt",
+                "char_count": 20,
+            }
+        ],
+    )
+    write_text(paths.chunks_dir / "chunk-001.txt", "alpha beta gamma\n")
+    write_text(paths.summary_dir / "chunk-001.md", "## Chunk Summary\n\nChunk summary.\n")
+    write_json(
+        paths.summary_payload_path,
+        {
+            "video_id": "video123",
+            "url": metadata.url,
+            "title": metadata.title,
+            "channel": metadata.channel,
+            "duration_sec": metadata.duration_sec,
+            "source_kind": "subtitles",
+            "transcript_path": "transcript/clean.txt",
+            "segments_path": "transcript/segments.json",
+            "chunk_index_path": "chunks/index.json",
+            "chunk_count": 1,
+            "segment_count": 1,
+            "artifacts": {},
+            "transcription": None,
+            "notes": [],
+        },
+    )
+    write_text(paths.summary_dir / "final.md", "# Final Summary\n\nLegacy summary.\n")
+    write_json(
+        paths.summary_manifest_path,
+        {
+            "video_id": "video123",
+            "codex_command": "codex",
+            "codex_model": "gpt-5.4",
+            "codex_reasoning_effort": "high",
+            "chunk_summaries": [
+                {
+                    "index": 1,
+                    "start_sec": 0.0,
+                    "end_sec": 12.0,
+                    "source_chunk_path": "chunks/chunk-001.txt",
+                    "prompt_path": "summary/prompts/chunk-001.prompt.txt",
+                    "output_path": "summary/chunk-001.md",
+                }
+            ],
+            "final_prompt_path": "summary/prompts/final.prompt.txt",
+            "final_summary_path": "summary/final.md",
+        },
+    )
+
+    result = summarize_video(
+        video_id="video123",
+        config=PipelineConfig(base_data_dir=tmp_path, codex_summary_model="gpt-5.4"),
+    )
+
+    assert result.final_summary_path == "final.md"
+    assert paths.summary_final_path.read_text(encoding="utf-8") == "# Final Summary\n\nLegacy summary.\n"
+    assert not (paths.summary_dir / "final.md").exists()
+    assert read_json(paths.summary_manifest_path)["final_summary_path"] == "final.md"
 
 
 def test_wrap_markdown_text_wraps_paragraphs_and_bullets_to_80_columns() -> None:

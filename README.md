@@ -180,7 +180,7 @@ Command behavior:
 - `process`
   Runs the real subtitle or ASR pipeline
 - `summarize`
-  Reuses existing chunk artifacts and generates chunk summaries plus `summary/final.md`
+  Reuses existing chunk artifacts and generates chunk summaries plus `final.md`
 - `rechunk`
   Regenerates chunk files from existing transcript segments
 - `prepare-summary`
@@ -233,7 +233,7 @@ Common files:
 - `chunks/index.json`
 - `summary_input/payload.json`
 - `summary/manifest.json`
-- `summary/final.md`
+- `final.md`
 - `logs/pipeline.log`
 
 ## Sample Output
@@ -243,6 +243,7 @@ Example workspace after a successful run:
 ```text
 data/videos/how-hardware-makes-threads-less-of-a-nightmare--IMceN4_rieo/
 ├── metadata.json
+├── final.md
 ├── source/
 │   ├── info.json
 │   ├── audio.webm
@@ -262,7 +263,6 @@ data/videos/how-hardware-makes-threads-less-of-a-nightmare--IMceN4_rieo/
 ├── summary/
 │   ├── chunk-001.md
 │   ├── chunk-002.md
-│   ├── final.md
 │   ├── manifest.json
 │   └── prompts/
 └── logs/
@@ -284,7 +284,7 @@ diarized: False
 ```
 
 Typical final outputs to inspect:
-- `summary/final.md`
+- `final.md`
 - `summary/manifest.json`
 - `summary_input/payload.json`
 - `transcript/segments.json`

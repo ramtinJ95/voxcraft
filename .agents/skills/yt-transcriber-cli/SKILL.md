@@ -107,7 +107,7 @@ Common files to inspect:
 - `chunks/index.json`
 - `summary_input/payload.json`
 - `summary/manifest.json`
-- `summary/final.md`
+- `final.md`
 - `logs/pipeline.log`
 
 ## Diagnosis Workflow
@@ -118,7 +118,7 @@ When a run looks wrong, inspect in this order:
 2. `summary_input/payload.json`
 3. `transcript/segments.json`
 4. `transcript/speaker_segments.json` when diarization is involved
-5. `summary/manifest.json` and `summary/final.md` for summary-only issues
+5. `summary/manifest.json` and `final.md` for summary-only issues
 
 Use this logic:
 

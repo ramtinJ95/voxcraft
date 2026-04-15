@@ -43,7 +43,7 @@ def build_artifact_paths(root_dir: Path, video_id: str) -> ArtifactPaths:
         summary_dir=summary_dir,
         summary_manifest_path=summary_dir / "manifest.json",
         summary_prompts_dir=summary_prompts_dir,
-        summary_final_path=summary_dir / "final.md",
+        summary_final_path=root_dir / "final.md",
         summary_final_prompt_path=summary_prompts_dir / "final.prompt.txt",
         logs_dir=logs_dir,
         pipeline_log_path=logs_dir / "pipeline.log",

@@ -246,7 +246,7 @@ Flow:
 - write `summary/chunk-*.md`
 - build a final synthesis prompt
 - call `codex exec` again
-- write `summary/final.md`
+- write `final.md`
 
 Summary settings:
 - default model: `gpt-5.4`
@@ -290,7 +290,7 @@ chunks/chunk-001.txt
 chunks/index.json
 summary_input/payload.json
 summary/manifest.json
-summary/final.md
+final.md
 logs/pipeline.log
 ```
 
