@@ -292,6 +292,8 @@ def _build_summary_command(
     output_path: Path,
 ) -> tuple[list[str], bool]:
     if provider == "codex":
+        resolved_workdir = workdir.resolve()
+        resolved_output_path = output_path.resolve()
         command_parts = [
             command,
             "exec",
@@ -300,9 +302,9 @@ def _build_summary_command(
             "read-only",
             "--ephemeral",
             "-C",
-            str(workdir),
+            str(resolved_workdir),
             "-o",
-            str(output_path),
+            str(resolved_output_path),
         ]
         if model:
             command_parts.extend(["--model", model])
