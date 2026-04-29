@@ -422,19 +422,19 @@ def test_pipeline_config_resolves_provider_specific_summary_profile() -> None:
         summary_profiles={
             "pi": SummaryHarnessConfig(
                 command="pi-custom",
-                model="openai/gpt-5.4",
+                model="openai/gpt-5.5",
                 thinking_level="high",
             )
         },
     )
 
     assert config.summary_command == "pi-custom"
-    assert config.summary_model == "openai/gpt-5.4"
+    assert config.summary_model == "openai/gpt-5.5"
     assert config.summary_thinking_level == "high"
     assert config.summary_harness("pi").command == "pi-custom"
-    assert config.summary_harness("pi").model == "openai/gpt-5.4"
+    assert config.summary_harness("pi").model == "openai/gpt-5.5"
     assert config.summary_harness("pi").thinking_level == "high"
-    assert config.summary_harness("codex").model == "gpt-5.4"
+    assert config.summary_harness("codex").model == "gpt-5.5"
     assert config.summary_harness("codex").thinking_level == "high"
 
 
@@ -463,12 +463,12 @@ def test_load_pipeline_config_reads_json_and_applies_overrides(tmp_path: Path) -
             "summary_profiles": {
                 "codex": {
                     "command": "codex-custom",
-                    "model": "gpt-5.4",
+                    "model": "gpt-5.5",
                     "thinking_level": "medium",
                 },
                 "pi": {
                     "command": "pi-custom",
-                    "model": "openai/gpt-5.4",
+                    "model": "openai/gpt-5.5",
                     "thinking_level": "high",
                 },
             },
@@ -549,7 +549,7 @@ def test_build_summary_command_for_pi_uses_print_mode_and_thinking_level() -> No
     command, writes_to_stdout = _build_summary_command(
         provider="pi",
         command="pi",
-        model="openai/gpt-5.4",
+        model="openai/gpt-5.5",
         thinking_level="high",
         workdir=Path("/tmp/workdir"),
         output_path=Path("/tmp/workdir/out.md"),
@@ -563,7 +563,7 @@ def test_build_summary_command_for_pi_uses_print_mode_and_thinking_level() -> No
         "--no-session",
         "--no-tools",
         "--model",
-        "openai/gpt-5.4",
+        "openai/gpt-5.5",
         "--thinking",
         "high",
     ]
@@ -666,20 +666,20 @@ def test_summarize_video_writes_chunk_and_final_outputs(monkeypatch, tmp_path: P
         {
             "provider": "codex",
             "command": "codex",
-            "model": "gpt-5.4",
+            "model": "gpt-5.5",
             "thinking_level": "high",
         },
         {
             "provider": "codex",
             "command": "codex",
-            "model": "gpt-5.4",
+            "model": "gpt-5.5",
             "thinking_level": "high",
         },
     ]
     manifest = read_json(paths.summary_manifest_path)
     assert manifest["summary_provider"] == "codex"
     assert manifest["summary_command"] == "codex"
-    assert manifest["summary_model"] == "gpt-5.4"
+    assert manifest["summary_model"] == "gpt-5.5"
     assert manifest["summary_thinking_level"] == "high"
     assert all(len(line) <= 80 for line in paths.summary_final_path.read_text(encoding="utf-8").splitlines())
 
@@ -734,7 +734,7 @@ def test_summarize_video_migrates_legacy_final_summary_without_rerunning_codex(t
         {
             "video_id": "video123",
             "codex_command": "codex",
-            "codex_model": "gpt-5.4",
+            "codex_model": "gpt-5.5",
             "codex_reasoning_effort": "high",
             "chunk_summaries": [
                 {

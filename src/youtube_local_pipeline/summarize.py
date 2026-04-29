@@ -162,8 +162,9 @@ If the transcript is noisy or ambiguous, say so explicitly instead of inventing 
 Write markdown with exactly these sections:
 
 ## Chunk Summary
-Write 2-5 substantial paragraphs covering only this chunk.
-Preserve technical detail, named concepts, causal relationships, and the speaker's reasoning.
+Write 4-7 substantial paragraphs covering only this chunk.
+Preserve technical detail, named concepts, causal relationships, examples, caveats,
+and the speaker's reasoning. Prefer adding another paragraph over dropping a useful distinction.
 
 ## Key Points
 Write 6-12 bullet points.
@@ -205,8 +206,10 @@ If a claim seems strong or the transcript looks noisy, keep that uncertainty vis
 Write markdown with exactly these sections:
 
 # Final Summary
-Write 4-8 substantive paragraphs that preserve the structure of the talk, the main mechanisms,
-and the technical reasoning.
+Write 8-12 substantive paragraphs. Preserve the structure of the talk and include
+specific examples, caveats, mechanisms, tradeoffs, and named concepts when they help
+reconstruct the speaker's reasoning. Do not merge distinct arguments into a single
+broad takeaway when the distinction would matter for later reference.
 
 ## Main Takeaways
 Write 10-18 bullet points.

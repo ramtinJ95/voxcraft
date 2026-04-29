@@ -23,7 +23,7 @@ The current default stack is:
 - Diarization model: `pyannote/speaker-diarization-community-1`
 - Fallback backend: `whisper.cpp`
 - Default summary provider: `codex`
-- Default Codex summary model: `gpt-5.4`
+- Default Codex summary model: `gpt-5.5`
 - Default Codex thinking level: `high`
 
 The default Qwen path is invoked through the repo-owned `yt-transcriber-qwen` wrapper. That wrapper patches the upstream loader so the hybrid `mlx-community/Qwen3-ASR-1.7B-8bit` checkpoint works in a fresh environment without hand-editing the venv.
@@ -149,7 +149,7 @@ Example config:
   "summary_profiles": {
     "codex": {
       "command": "codex",
-      "model": "gpt-5.4",
+      "model": "gpt-5.5",
       "thinking_level": "high"
     },
     "claude": {
@@ -162,7 +162,7 @@ Example config:
     },
     "pi": {
       "command": "pi",
-      "model": "openai/gpt-5.4",
+      "model": "openai/gpt-5.5",
       "thinking_level": "high"
     }
   }
@@ -236,7 +236,7 @@ Override the configured Pi model for one run:
 ```bash
 yt-transcriber summarize <youtube_id> \
   --provider pi \
-  --model openai/gpt-5.4 \
+  --model openai/gpt-5.5 \
   --thinking-level high
 ```
 
@@ -252,12 +252,12 @@ yt-transcriber process "<youtube-url>"
 yt-transcriber process "<youtube-url>" --summarize
 yt-transcriber --config ./config.json process "<youtube-url>" --summarize
 yt-transcriber process "<youtube-url>" --summarize --summary-provider claude
-yt-transcriber process "<youtube-url>" --summarize --summary-provider pi --summary-model openai/gpt-5.4 --summary-thinking-level high
+yt-transcriber process "<youtube-url>" --summarize --summary-provider pi --summary-model openai/gpt-5.5 --summary-thinking-level high
 yt-transcriber process "<youtube-url>" --diarize
 yt-transcriber summarize <youtube_id>
 yt-transcriber --config ./config.json summarize <youtube_id>
 yt-transcriber summarize <youtube_id> --provider gemini
-yt-transcriber summarize <youtube_id> --provider pi --model openai/gpt-5.4 --thinking-level high
+yt-transcriber summarize <youtube_id> --provider pi --model openai/gpt-5.5 --thinking-level high
 yt-transcriber rechunk <youtube_id>
 yt-transcriber prepare-summary <youtube_id>
 ```
