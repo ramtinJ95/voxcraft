@@ -162,9 +162,10 @@ If the transcript is noisy or ambiguous, say so explicitly instead of inventing 
 Write markdown with exactly these sections:
 
 ## Chunk Summary
-Write 4-7 substantial paragraphs covering only this chunk.
+Write 2-7 substantial paragraphs covering only this chunk.
 Preserve technical detail, named concepts, causal relationships, examples, caveats,
-and the speaker's reasoning. Prefer adding another paragraph over dropping a useful distinction.
+and the speaker's reasoning. Use the lower end when the chunk is thin, repetitive,
+or mostly transitional; add paragraphs only when needed to preserve useful distinctions.
 
 ## Key Points
 Write 6-12 bullet points.
@@ -206,10 +207,12 @@ If a claim seems strong or the transcript looks noisy, keep that uncertainty vis
 Write markdown with exactly these sections:
 
 # Final Summary
-Write 8-12 substantive paragraphs. Preserve the structure of the talk and include
+Write 4-12 substantive paragraphs. Preserve the structure of the talk and include
 specific examples, caveats, mechanisms, tradeoffs, and named concepts when they help
 reconstruct the speaker's reasoning. Do not merge distinct arguments into a single
-broad takeaway when the distinction would matter for later reference.
+broad takeaway when the distinction would matter for later reference. Use the lower
+end when the video is simple or repetitive; use the upper end only when the talk has
+enough distinct material to justify it.
 
 ## Main Takeaways
 Write 10-18 bullet points.
