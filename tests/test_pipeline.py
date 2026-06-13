@@ -499,6 +499,68 @@ def test_qwen_transcription_parses_json_and_speaker_segments(monkeypatch, tmp_pa
     assert captured_diarize_args["num_speakers"] is None
 
 
+def test_qwen_transcription_reuses_saved_payload_for_diarization_retry(monkeypatch, tmp_path: Path) -> None:
+    audio_path = tmp_path / "audio.wav"
+    audio_path.write_bytes(b"RIFF")
+    output_base = tmp_path / "asr-output"
+    write_json(
+        output_base.with_suffix(".json"),
+        {
+            "text": "Hello there",
+            "language": "en",
+            "segments": [
+                {"start": 0.0, "end": 0.5, "text": "Hello"},
+                {"start": 0.5, "end": 0.9, "text": "there"},
+            ],
+            "_yt_transcriber": {
+                "backend": "qwen3-asr",
+                "context": "",
+                "dtype": "float16",
+                "draft_model": None,
+                "forced_aligner": "Qwen/Qwen3-ForcedAligner-0.6B",
+                "input_path": str(audio_path.resolve()),
+                "language": "en",
+                "model": "mlx-community/Qwen3-ASR-1.7B-8bit",
+                "num_draft_tokens": 4,
+            },
+        },
+    )
+
+    def fail_run(*args, **kwargs):
+        raise AssertionError("saved ASR output should avoid rerunning Qwen")
+
+    def fake_diarize(*, audio_path, payload, model_id, num_speakers, min_speakers, max_speakers):
+        return (
+            [{"speaker": "SPEAKER_00", "start": 0.0, "end": 0.9, "text": "Hello there"}],
+            [
+                {"speaker": "SPEAKER_00", "start": 0.0, "end": 0.5, "text": "Hello"},
+                {"speaker": "SPEAKER_00", "start": 0.5, "end": 0.9, "text": "there"},
+            ],
+        )
+
+    monkeypatch.setattr("youtube_local_pipeline.transcribe.shutil.which", lambda command: f"/usr/local/bin/{command}")
+    monkeypatch.setattr("youtube_local_pipeline.transcribe.subprocess.run", fail_run)
+    monkeypatch.setattr("youtube_local_pipeline.transcribe._diarize_qwen_payload_with_pyannote", fake_diarize)
+
+    result = transcribe_audio_file(
+        request=TranscriptionRequest(
+            input_path=audio_path,
+            backend="qwen3-asr",
+            model="mlx-community/Qwen3-ASR-1.7B-8bit",
+            language="en",
+        ),
+        qwen_diarize=True,
+        output_base=output_base,
+    )
+
+    assert result.details.diarized is True
+    assert result.details.speaker_count == 1
+    assert result.segments[0].speaker == "SPEAKER_00"
+    assert read_json(output_base.with_suffix(".json"))["speaker_segments"] == [
+        {"speaker": "SPEAKER_00", "start": 0.0, "end": 0.9, "text": "Hello there"}
+    ]
+
+
 def test_resolve_whisper_cpp_model_path_finds_named_model_in_local_models_dir(tmp_path: Path) -> None:
     model_dir = tmp_path / "models"
     model_dir.mkdir()

@@ -127,51 +127,72 @@ def _transcribe_with_qwen3_asr(
 
     output_base = output_base or request.input_path.with_suffix("")
     output_base.parent.mkdir(parents=True, exist_ok=True)
+    output_json_path = output_base.with_suffix(".json")
+    payload = _load_reusable_qwen_payload(
+        output_json_path=output_json_path,
+        request=request,
+        context=context,
+        forced_aligner=forced_aligner,
+        dtype=dtype,
+        draft_model=draft_model,
+        num_draft_tokens=num_draft_tokens,
+    ) if diarize else None
 
-    with tempfile.TemporaryDirectory(prefix="qwen-asr-", dir=output_base.parent) as temp_dir_name:
-        temp_dir = Path(temp_dir_name)
-        command_args = [
-            *command_prefix,
-            str(request.input_path),
-            "--model",
-            request.model,
-            "--output-dir",
-            str(temp_dir),
-            "--output-format",
-            "json",
-            "--timestamps",
-            "--forced-aligner",
-            forced_aligner,
-            "--dtype",
-            dtype,
-            "--quiet",
-            "--no-progress",
-        ]
-        if request.language:
-            command_args.extend(["--language", request.language])
-        if context:
-            command_args.extend(["--context", context])
-        if draft_model:
-            command_args.extend(["--draft-model", draft_model, "--num-draft-tokens", str(num_draft_tokens)])
+    if payload is None:
+        with tempfile.TemporaryDirectory(prefix="qwen-asr-", dir=output_base.parent) as temp_dir_name:
+            temp_dir = Path(temp_dir_name)
+            command_args = [
+                *command_prefix,
+                str(request.input_path),
+                "--model",
+                request.model,
+                "--output-dir",
+                str(temp_dir),
+                "--output-format",
+                "json",
+                "--timestamps",
+                "--forced-aligner",
+                forced_aligner,
+                "--dtype",
+                dtype,
+                "--quiet",
+                "--no-progress",
+            ]
+            if request.language:
+                command_args.extend(["--language", request.language])
+            if context:
+                command_args.extend(["--context", context])
+            if draft_model:
+                command_args.extend(["--draft-model", draft_model, "--num-draft-tokens", str(num_draft_tokens)])
 
-        env = dict(os.environ)
+            env = dict(os.environ)
 
-        completed = subprocess.run(
-            command_args,
-            capture_output=True,
-            text=True,
-            check=False,
-            env=env,
+            completed = subprocess.run(
+                command_args,
+                capture_output=True,
+                text=True,
+                check=False,
+                env=env,
+            )
+            if completed.returncode != 0:
+                stderr = completed.stderr.strip() or completed.stdout.strip() or "mlx-qwen3-asr exited with a non-zero status."
+                raise RuntimeError(stderr)
+
+            temp_output_json_path = temp_dir / f"{request.input_path.stem}.json"
+            if not temp_output_json_path.exists():
+                raise RuntimeError(f"mlx-qwen3-asr did not produce the expected JSON output: {temp_output_json_path}")
+
+            payload = json.loads(temp_output_json_path.read_text(encoding="utf-8"))
+        _mark_qwen_payload(
+            payload=payload,
+            request=request,
+            context=context,
+            forced_aligner=forced_aligner,
+            dtype=dtype,
+            draft_model=draft_model,
+            num_draft_tokens=num_draft_tokens,
         )
-        if completed.returncode != 0:
-            stderr = completed.stderr.strip() or completed.stdout.strip() or "mlx-qwen3-asr exited with a non-zero status."
-            raise RuntimeError(stderr)
-
-        temp_output_json_path = temp_dir / f"{request.input_path.stem}.json"
-        if not temp_output_json_path.exists():
-            raise RuntimeError(f"mlx-qwen3-asr did not produce the expected JSON output: {temp_output_json_path}")
-
-        payload = json.loads(temp_output_json_path.read_text(encoding="utf-8"))
+        output_json_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
     if diarize:
         speaker_segments, labeled_word_segments = _diarize_qwen_payload_with_pyannote(
@@ -187,7 +208,6 @@ def _transcribe_with_qwen3_asr(
         if speaker_segments:
             payload["speaker_segments"] = speaker_segments
 
-    output_json_path = output_base.with_suffix(".json")
     output_json_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
     language = str(payload.get("language") or request.language or "")
@@ -208,6 +228,79 @@ def _transcribe_with_qwen3_asr(
             speaker_count=speaker_count,
         ),
     )
+
+
+def _load_reusable_qwen_payload(
+    *,
+    output_json_path: Path,
+    request: TranscriptionRequest,
+    context: str,
+    forced_aligner: str,
+    dtype: str,
+    draft_model: str | None,
+    num_draft_tokens: int,
+) -> dict[str, object] | None:
+    if not output_json_path.exists():
+        return None
+    payload = json.loads(output_json_path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        return None
+    marker = payload.get("_yt_transcriber")
+    if not isinstance(marker, dict):
+        return None
+    expected_marker = _qwen_payload_marker(
+        request=request,
+        context=context,
+        forced_aligner=forced_aligner,
+        dtype=dtype,
+        draft_model=draft_model,
+        num_draft_tokens=num_draft_tokens,
+    )
+    if marker != expected_marker:
+        return None
+    return payload
+
+
+def _mark_qwen_payload(
+    *,
+    payload: dict[str, object],
+    request: TranscriptionRequest,
+    context: str,
+    forced_aligner: str,
+    dtype: str,
+    draft_model: str | None,
+    num_draft_tokens: int,
+) -> None:
+    payload["_yt_transcriber"] = _qwen_payload_marker(
+        request=request,
+        context=context,
+        forced_aligner=forced_aligner,
+        dtype=dtype,
+        draft_model=draft_model,
+        num_draft_tokens=num_draft_tokens,
+    )
+
+
+def _qwen_payload_marker(
+    *,
+    request: TranscriptionRequest,
+    context: str,
+    forced_aligner: str,
+    dtype: str,
+    draft_model: str | None,
+    num_draft_tokens: int,
+) -> dict[str, object]:
+    return {
+        "backend": "qwen3-asr",
+        "context": context,
+        "dtype": dtype,
+        "draft_model": draft_model,
+        "forced_aligner": forced_aligner,
+        "input_path": str(request.input_path.resolve()),
+        "language": request.language or None,
+        "model": request.model,
+        "num_draft_tokens": num_draft_tokens,
+    }
 
 
 def _transcribe_with_whisper_cpp(
