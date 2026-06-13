@@ -54,6 +54,12 @@ def _find_command_location(command: str | None) -> str | None:
     return None
 
 
+def _command_status(location: str | None, *, required: bool) -> str:
+    if location:
+        return "ok"
+    return "missing" if required else "optional"
+
+
 def _load_runtime_config(
     ctx: typer.Context,
     *,
@@ -78,18 +84,19 @@ def doctor(ctx: typer.Context) -> None:
 
     resolved_qwen_command = describe_qwen_command(config.qwen_command)
     command_rows = [
-        ("ffmpeg", shutil.which("ffmpeg"), "required for audio normalization and local ASR"),
+        ("ffmpeg", shutil.which("ffmpeg"), "required for audio normalization and local ASR", True),
         (
             "yt-transcriber-qwen",
             resolved_qwen_command or f"{Path(sys.executable).resolve()} -m youtube_local_pipeline.qwen_cli",
             "default Qwen entrypoint",
+            config.default_asr_backend == "qwen3-asr",
         ),
-        ("python3.11 on PATH", shutil.which("python3.11"), "optional after the environment is created"),
-        ("yt-dlp command", shutil.which("yt-dlp"), "optional; runtime uses the installed yt_dlp Python package"),
-        ("mlx-qwen3-asr command", shutil.which("mlx-qwen3-asr"), "optional; the wrapper is the default path"),
-        ("whisper-cli", shutil.which("whisper-cli"), "optional; only needed for the whisper.cpp fallback"),
-        ("uv", shutil.which("uv"), "optional; setup helper"),
-        ("brew", shutil.which("brew"), "optional; setup helper on macOS"),
+        ("python3.11 on PATH", shutil.which("python3.11"), "optional after the environment is created", False),
+        ("yt-dlp command", shutil.which("yt-dlp"), "optional; runtime uses the installed yt_dlp Python package", False),
+        ("mlx-qwen3-asr command", shutil.which("mlx-qwen3-asr"), "optional; the wrapper is the default path", False),
+        ("whisper-cli", shutil.which("whisper-cli"), "optional; only needed for the whisper.cpp fallback", config.default_asr_backend == "whisper-cpp"),
+        ("uv", shutil.which("uv"), "optional; setup helper", False),
+        ("brew", shutil.which("brew"), "optional; setup helper on macOS", False),
     ]
     for provider, profile in config.summary_profiles.items():
         location = _find_command_location(profile.command)
@@ -98,10 +105,11 @@ def doctor(ctx: typer.Context) -> None:
                 f"summary CLI ({provider})",
                 location,
                 f"configured as {profile.command}",
+                False,
             )
         )
-    for name, location, description in command_rows:
-        status = "ok" if location else "optional"
+    for name, location, description, required in command_rows:
+        status = _command_status(location, required=required)
         detail = location or description
         table.add_row(name, status, detail)
 
