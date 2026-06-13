@@ -15,6 +15,7 @@ from pydantic import BaseModel
 from .clean import join_transcript_tokens, normalize_transcript_text
 from .config import PipelineConfig
 from .models import TranscriptSegment, TranscriptionDetails
+from .utils import append_log
 
 MODEL_FILE_EXTENSIONS = (".bin", ".gguf")
 DEFAULT_SPEAKER_LABEL = "SPEAKER_00"
@@ -77,6 +78,7 @@ def transcribe_audio_file(
     whisper_cpp_command: str = "whisper-cli",
     whisper_cpp_threads: int = 4,
     output_base: Path | None = None,
+    log_path: Path | None = None,
 ) -> TranscriptionResult:
     if request.backend == "qwen3-asr":
         return _transcribe_with_qwen3_asr(
@@ -93,6 +95,7 @@ def transcribe_audio_file(
             draft_model=qwen_draft_model,
             num_draft_tokens=qwen_num_draft_tokens,
             output_base=output_base,
+            log_path=log_path,
         )
 
     if request.backend == "whisper-cpp":
@@ -103,6 +106,7 @@ def transcribe_audio_file(
             command=whisper_cpp_command,
             threads=whisper_cpp_threads,
             output_base=output_base,
+            log_path=log_path,
         )
 
     raise RuntimeError(f"Unsupported transcription backend: {request.backend}")
@@ -122,6 +126,7 @@ def _transcribe_with_qwen3_asr(
     draft_model: str | None,
     num_draft_tokens: int,
     output_base: Path | None = None,
+    log_path: Path | None = None,
 ) -> TranscriptionResult:
     command_prefix = resolve_qwen_command_args(command)
 
@@ -139,6 +144,7 @@ def _transcribe_with_qwen3_asr(
     ) if diarize else None
 
     if payload is None:
+        _append_optional_log(log_path, f"Starting qwen3-asr subprocess with {request.model}")
         with tempfile.TemporaryDirectory(prefix="qwen-asr-", dir=output_base.parent) as temp_dir_name:
             temp_dir = Path(temp_dir_name)
             command_args = [
@@ -193,8 +199,12 @@ def _transcribe_with_qwen3_asr(
             num_draft_tokens=num_draft_tokens,
         )
         output_json_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        _append_optional_log(log_path, f"Saved raw qwen3-asr output to {output_json_path.name}")
+    else:
+        _append_optional_log(log_path, f"Reusing saved qwen3-asr output from {output_json_path.name}")
 
     if diarize:
+        _append_optional_log(log_path, "Starting pyannote diarization")
         speaker_segments, labeled_word_segments = _diarize_qwen_payload_with_pyannote(
             audio_path=request.input_path,
             payload=payload,
@@ -207,6 +217,7 @@ def _transcribe_with_qwen3_asr(
             payload["segments"] = labeled_word_segments
         if speaker_segments:
             payload["speaker_segments"] = speaker_segments
+        _append_optional_log(log_path, "Finished pyannote diarization")
 
     output_json_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
@@ -310,6 +321,7 @@ def _transcribe_with_whisper_cpp(
     command: str,
     threads: int,
     output_base: Path | None = None,
+    log_path: Path | None = None,
 ) -> TranscriptionResult:
     if shutil.which(command) is None:
         raise RuntimeError(f"{command} is not available on PATH.")
@@ -336,6 +348,7 @@ def _transcribe_with_whisper_cpp(
     ]
     command_args.extend(["-l", request.language or "auto"])
 
+    _append_optional_log(log_path, f"Starting whisper.cpp subprocess with {request.model}")
     completed = subprocess.run(
         command_args,
         capture_output=True,
@@ -349,6 +362,7 @@ def _transcribe_with_whisper_cpp(
     output_json_path = output_base.with_suffix(".json")
     if not output_json_path.exists():
         raise RuntimeError(f"whisper.cpp did not produce the expected JSON output: {output_json_path}")
+    _append_optional_log(log_path, f"Saved whisper.cpp output to {output_json_path.name}")
 
     payload = json.loads(output_json_path.read_text(encoding="utf-8"))
     transcription = payload.get("transcription", [])
@@ -378,6 +392,11 @@ def _transcribe_with_whisper_cpp(
             diarized=False,
         ),
     )
+
+
+def _append_optional_log(path: Path | None, message: str) -> None:
+    if path is not None:
+        append_log(path, message)
 
 
 def resolve_whisper_cpp_model_path(
