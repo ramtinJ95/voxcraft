@@ -11,6 +11,7 @@ from .manifest import resolve_video_root
 from .utils import read_json
 
 QWEN_1_7B_8BIT_MODEL = "mlx-community/Qwen3-ASR-1.7B-8bit"
+QWEN_1_7B_MODEL = "Qwen/Qwen3-ASR-1.7B"
 QWEN_FORCED_ALIGNER_FP16_MODEL = "Qwen/Qwen3-ForcedAligner-0.6B"
 PYANNOTE_COMMUNITY_1_MODEL = "pyannote/speaker-diarization-community-1"
 DEFAULT_SUMMARY_PROVIDER = "codex"
@@ -142,7 +143,7 @@ class PipelineConfig(BaseModel):
     default_asr_backend: str = "qwen3-asr"
     qwen_default_model_english: str = QWEN_1_7B_8BIT_MODEL
     qwen_default_model_multilingual: str = QWEN_1_7B_8BIT_MODEL
-    qwen_high_quality_model: str = QWEN_1_7B_8BIT_MODEL
+    qwen_high_quality_model: str = QWEN_1_7B_MODEL
     qwen_command: str = Field(default_factory=lambda: _default_console_script("yt-transcriber-qwen"))
     qwen_context: str = ""
     qwen_forced_aligner: str = QWEN_FORCED_ALIGNER_FP16_MODEL
@@ -150,8 +151,8 @@ class PipelineConfig(BaseModel):
     qwen_dtype: str = "float16"
     qwen_draft_model: str | None = None
     qwen_num_draft_tokens: int = 4
-    whisper_default_model_english: str = "large-v3"
-    whisper_default_model_multilingual: str = "large-v3"
+    whisper_default_model_english: str = "base"
+    whisper_default_model_multilingual: str = "base"
     whisper_high_quality_model: str = "large-v3"
     chunk_target_chars: int = 10000
     reuse_cached_artifacts: bool = True
