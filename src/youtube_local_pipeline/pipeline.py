@@ -67,6 +67,7 @@ def process_video(
     candidate = choose_subtitle_candidate(
         subtitles=metadata.subtitles,
         preferred_language=language or config.language_preference,
+        prefer_english=language is None,
     )
     source_kind = _planned_source_kind(candidate)
     transcription_details = _planned_transcription_details(
@@ -400,7 +401,8 @@ def _cached_requested_source_kind(
         return SourceKind.LOCAL_ASR
 
     preferred_language = (language or config.language_preference).lower()
-    for candidate_language in ("en", preferred_language):
+    language_order = ("en", preferred_language) if language is None else (preferred_language, "en")
+    for candidate_language in language_order:
         if candidate_language and candidate_language in subtitle_languages:
             return SourceKind.MANUAL_SUBTITLES
     return SourceKind.LOCAL_ASR

@@ -43,6 +43,20 @@ def test_choose_subtitle_candidate_prefers_manual_english_first() -> None:
     assert candidate.is_automatic is False
 
 
+def test_choose_subtitle_candidate_can_prefer_explicit_language() -> None:
+    candidate = choose_subtitle_candidate(
+        subtitles={
+            "en": [{"ext": "vtt", "url": "https://example.com/en.vtt"}],
+            "es": [{"ext": "vtt", "url": "https://example.com/es.vtt"}],
+        },
+        preferred_language="es",
+        prefer_english=False,
+    )
+
+    assert candidate is not None
+    assert candidate.language == "es"
+
+
 def test_choose_subtitle_candidate_ignores_auto_captions_by_default() -> None:
     candidate = choose_subtitle_candidate(
         subtitles={},
@@ -295,6 +309,34 @@ def test_process_video_dry_run_applies_explicit_model_override(monkeypatch, tmp_
     assert result.source_kind == SourceKind.LOCAL_ASR
     assert result.transcription is not None
     assert result.transcription.model == "Qwen/Qwen3-ASR-0.6B"
+
+
+def test_process_video_dry_run_prefers_explicit_subtitle_language(monkeypatch, tmp_path: Path) -> None:
+    metadata = VideoMetadata(
+        video_id="lang123",
+        url="https://www.youtube.com/watch?v=lang123",
+        title="Language Override Video",
+        subtitles={
+            "en": [SubtitleCandidate(language="en", ext="vtt", url="https://example.com/en.vtt")],
+            "es": [SubtitleCandidate(language="es", ext="vtt", url="https://example.com/es.vtt")],
+        },
+        automatic_captions={},
+    )
+
+    def fake_probe_video(url: str) -> tuple[VideoMetadata, dict[str, object]]:
+        return metadata, {"id": metadata.video_id, "webpage_url": metadata.url}
+
+    monkeypatch.setattr("youtube_local_pipeline.pipeline.probe_video", fake_probe_video)
+
+    result = process_video(
+        url=metadata.url,
+        config=PipelineConfig(base_data_dir=tmp_path / "videos"),
+        language="es",
+        dry_run=True,
+    )
+
+    assert result.source_kind == SourceKind.MANUAL_SUBTITLES
+    assert any("Creator-provided subtitles are available in es" in note for note in result.notes)
 
 
 def test_apply_mlx_qwen3_asr_patch_supports_hybrid_quantized_checkpoint(tmp_path: Path) -> None:

@@ -63,6 +63,7 @@ def build_audio_download_options(source_dir: Path) -> dict[str, Any]:
 def choose_subtitle_candidate(
     subtitles: dict[str, list[dict[str, Any] | SubtitleCandidate]] | None,
     preferred_language: str = "en",
+    prefer_english: bool = True,
 ) -> SubtitleCandidate | None:
     subtitles = subtitles or {}
     preferred_language = preferred_language.lower()
@@ -82,8 +83,9 @@ def choose_subtitle_candidate(
         )
         return ranked_tracks[0]
 
+    language_order = ("en", preferred_language) if prefer_english else (preferred_language, "en")
     ordered_languages: list[str] = []
-    for language in ("en", preferred_language):
+    for language in language_order:
         if language and language not in ordered_languages:
             ordered_languages.append(language)
 
