@@ -166,6 +166,71 @@ def test_process_video_dry_run_uses_upload_date_in_new_workspace_name(monkeypatc
     )
 
 
+def test_process_video_reuses_cached_subtitle_artifacts_without_probe(monkeypatch, tmp_path: Path) -> None:
+    base_dir = tmp_path / "videos"
+    paths = initialize_workspace(build_artifact_paths(base_dir / "test-video--abc123", "abc123"))
+    write_json(
+        paths.metadata_path,
+        {
+            "video_id": "abc123",
+            "url": "https://www.youtube.com/watch?v=abc123",
+            "title": "Test Video",
+            "subtitle_languages": ["en"],
+            "automatic_caption_languages": [],
+        },
+    )
+    write_json(paths.info_path, {"id": "abc123"})
+    write_text(paths.clean_transcript_path, "Hello world\n")
+    write_json(
+        paths.segments_path,
+        [TranscriptSegment(start_sec=0.0, end_sec=1.0, text="Hello world").model_dump(mode="json")],
+    )
+    write_json(
+        paths.chunk_index_path,
+        [
+            {
+                "index": 1,
+                "start_sec": 0.0,
+                "end_sec": 1.0,
+                "path": "chunks/chunk-001.txt",
+                "char_count": 11,
+            }
+        ],
+    )
+    write_json(
+        paths.summary_payload_path,
+        {
+            "video_id": "abc123",
+            "url": "https://www.youtube.com/watch?v=abc123",
+            "title": "Test Video",
+            "source_kind": "subtitles",
+            "transcript_path": "transcript/clean.txt",
+            "segments_path": "transcript/segments.json",
+            "chunk_index_path": "chunks/index.json",
+            "chunk_count": 1,
+            "segment_count": 1,
+            "artifacts": {},
+            "transcription": None,
+            "notes": ["Creator-provided subtitles are available in en; ASR can be skipped."],
+        },
+    )
+
+    def fail_probe_video(url: str):
+        raise AssertionError("metadata probe should be skipped for compatible cached artifacts")
+
+    monkeypatch.setattr("youtube_local_pipeline.pipeline.probe_video", fail_probe_video)
+
+    result = process_video(
+        url="https://www.youtube.com/watch?v=abc123",
+        config=PipelineConfig(base_data_dir=base_dir),
+        language="en",
+    )
+
+    assert result.used_cache is True
+    assert result.source_kind == SourceKind.MANUAL_SUBTITLES
+    assert result.chunk_count == 1
+
+
 def test_resolve_qwen_command_args_falls_back_to_module_wrapper(monkeypatch) -> None:
     monkeypatch.setattr("youtube_local_pipeline.transcribe.shutil.which", lambda command: None)
     monkeypatch.setattr("youtube_local_pipeline.transcribe.sys.executable", "/tmp/python")
