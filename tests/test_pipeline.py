@@ -4,6 +4,8 @@ import hashlib
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from youtube_local_pipeline.cli import _command_status
 from youtube_local_pipeline.config import (
     CONFIG_ENV_VAR,
@@ -826,6 +828,14 @@ def test_load_pipeline_config_reads_json_and_applies_overrides(tmp_path: Path) -
     assert config.summary_command == "pi-custom"
     assert config.summary_model == "openai/gpt-5.5"
     assert config.summary_thinking_level == "high"
+
+
+def test_load_pipeline_config_rejects_unknown_keys(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.json"
+    write_json(config_path, {"summary_provder": "codex"})
+
+    with pytest.raises(ValueError, match="Extra inputs are not permitted"):
+        load_pipeline_config(config_path=config_path)
 
 
 def test_build_summary_command_for_claude_disables_tools() -> None:
