@@ -14,20 +14,6 @@ def normalize_transcript_text(text: str) -> str:
     return WHITESPACE_RE.sub(" ", normalized).strip()
 
 
-def remove_adjacent_duplicate_lines(lines: list[str]) -> list[str]:
-    deduped: list[str] = []
-    previous = ""
-
-    for line in lines:
-        normalized = normalize_transcript_text(line)
-        if not normalized or normalized == previous:
-            continue
-        deduped.append(normalized)
-        previous = normalized
-
-    return deduped
-
-
 def clean_segments(segments: list[TranscriptSegment]) -> list[TranscriptSegment]:
     cleaned: list[TranscriptSegment] = []
     previous: tuple[str | None, str] | None = None

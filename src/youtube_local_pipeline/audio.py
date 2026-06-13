@@ -29,7 +29,6 @@ def normalize_audio(
     output_path: Path,
     sample_rate: int = 16000,
     channels: int = 1,
-    dry_run: bool = False,
 ) -> list[str]:
     command = ffmpeg_normalize_command(
         input_path=input_path,
@@ -37,9 +36,6 @@ def normalize_audio(
         sample_rate=sample_rate,
         channels=channels,
     )
-
-    if dry_run:
-        return command
 
     if shutil.which("ffmpeg") is None:
         raise RuntimeError("ffmpeg is not available on PATH.")
