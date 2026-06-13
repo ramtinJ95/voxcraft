@@ -86,6 +86,7 @@ class TranscriptionDetails(BaseModel):
     language: str | None = None
     diarized: bool | None = None
     speaker_count: int | None = None
+    fingerprint: str | None = None
 
 
 class SummaryPayload(BaseModel):
