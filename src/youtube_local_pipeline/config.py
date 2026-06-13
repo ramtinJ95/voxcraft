@@ -5,7 +5,7 @@ import sys
 from typing import Any
 from pathlib import Path
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .manifest import resolve_video_root
 from .utils import read_json
@@ -98,6 +98,8 @@ def load_pipeline_config(
 
 
 class SummaryHarnessConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     command: str | None = None
     model: str | None = None
     thinking_level: str | None = None
@@ -135,6 +137,8 @@ class TranscriptionProfile(BaseModel):
 
 
 class PipelineConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     base_data_dir: Path = Path("data/videos")
     language_preference: str = "en"
     subtitle_first: bool = True
