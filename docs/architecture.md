@@ -102,7 +102,7 @@ The current effective defaults are:
 - diarization model: `pyannote/speaker-diarization-community-1`
 - fallback backend: `whisper-cpp`
 - default summary provider: `codex`
-- default Codex summary model: `gpt-5.4`
+- default Codex summary model: `gpt-5.5`
 - default Codex thinking level: `high`
 
 Summary CLI settings are stored per provider in `PipelineConfig.summary_profiles`.
@@ -284,7 +284,7 @@ Flow:
 Summary settings:
 - supported providers: `codex`, `claude`, `gemini`, `pi`
 - default provider: `codex`
-- default Codex model: `gpt-5.4`
+- default Codex model: `gpt-5.5`
 - default Codex thinking level: `high`
 - thinking-level passthrough is currently implemented for `codex` and `pi`
 
