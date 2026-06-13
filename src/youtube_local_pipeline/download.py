@@ -60,7 +60,7 @@ def build_audio_download_options(source_dir: Path) -> dict[str, Any]:
 
 
 def choose_subtitle_candidate(
-    subtitles: dict[str, list[dict[str, Any]]] | None,
+    subtitles: dict[str, list[dict[str, Any] | SubtitleCandidate]] | None,
     preferred_language: str = "en",
 ) -> SubtitleCandidate | None:
     subtitles = subtitles or {}
@@ -68,24 +68,18 @@ def choose_subtitle_candidate(
 
     def best_track(
         language: str,
-        tracks: list[dict[str, Any]] | None,
+        tracks: list[dict[str, Any] | SubtitleCandidate] | None,
         is_automatic: bool,
     ) -> SubtitleCandidate | None:
         if not tracks:
             return None
 
+        normalized_tracks = [_coerce_subtitle_track(language, track, is_automatic) for track in tracks]
         ranked_tracks = sorted(
-            tracks,
-            key=lambda track: EXTENSION_PRIORITY.get(track.get("ext", ""), 99),
+            normalized_tracks,
+            key=lambda track: EXTENSION_PRIORITY.get(track.ext, 99),
         )
-        chosen = ranked_tracks[0]
-        return SubtitleCandidate(
-            language=language,
-            ext=chosen.get("ext", "vtt"),
-            url=chosen.get("url"),
-            name=chosen.get("name"),
-            is_automatic=is_automatic,
-        )
+        return ranked_tracks[0]
 
     ordered_languages: list[str] = []
     for language in ("en", preferred_language):
@@ -98,6 +92,22 @@ def choose_subtitle_candidate(
             return candidate
 
     return None
+
+
+def _coerce_subtitle_track(
+    language: str,
+    track: dict[str, Any] | SubtitleCandidate,
+    is_automatic: bool,
+) -> SubtitleCandidate:
+    if isinstance(track, SubtitleCandidate):
+        return track.model_copy(update={"is_automatic": is_automatic})
+    return SubtitleCandidate(
+        language=language,
+        ext=track.get("ext", "vtt"),
+        url=track.get("url"),
+        name=track.get("name"),
+        is_automatic=is_automatic,
+    )
 
 
 def probe_video(url: str) -> tuple[VideoMetadata, dict[str, Any]]:

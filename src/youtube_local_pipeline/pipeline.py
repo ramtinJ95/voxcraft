@@ -65,7 +65,7 @@ def process_video(
 
     metadata, raw_info = probe_video(url)
     candidate = choose_subtitle_candidate(
-        subtitles={key: [item.model_dump(mode="json") for item in value] for key, value in metadata.subtitles.items()},
+        subtitles=metadata.subtitles,
         preferred_language=language or config.language_preference,
     )
     source_kind = _planned_source_kind(candidate)
