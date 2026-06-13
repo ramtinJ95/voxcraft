@@ -18,6 +18,7 @@ EXTENSION_PRIORITY = {
     "srv3": 2,
     "ttml": 3,
 }
+DIRECT_SUBTITLE_TIMEOUT_SEC = 30
 
 
 def build_probe_options() -> dict[str, Any]:
@@ -162,19 +163,13 @@ def download_subtitle_file(
     except DownloadError:
         if candidate.url is None:
             raise
-        direct_path = source_dir / f"subtitles.{candidate.language}.{_preferred_subtitle_suffix(candidate)}"
-        with urlopen(candidate.url) as response:
-            direct_path.write_bytes(response.read())
-        return direct_path
+        return _download_direct_subtitle(source_dir=source_dir, candidate=candidate)
 
     downloaded = _find_downloaded_subtitle_file(source_dir, candidate.language)
     if downloaded is None:
         if candidate.url is None:
             raise RuntimeError(f"Subtitle download completed but no subtitle file was found for {candidate.language}.")
-        direct_path = source_dir / f"subtitles.{candidate.language}.{_preferred_subtitle_suffix(candidate)}"
-        with urlopen(candidate.url) as response:
-            direct_path.write_bytes(response.read())
-        return direct_path
+        return _download_direct_subtitle(source_dir=source_dir, candidate=candidate)
 
     target = source_dir / f"subtitles.{candidate.language}{downloaded.suffix.lower()}"
     if downloaded != target:
@@ -182,6 +177,15 @@ def download_subtitle_file(
             target.unlink()
         downloaded.replace(target)
     return target
+
+
+def _download_direct_subtitle(source_dir: Path, candidate: SubtitleCandidate) -> Path:
+    if candidate.url is None:
+        raise RuntimeError(f"No direct subtitle URL is available for {candidate.language}.")
+    direct_path = source_dir / f"subtitles.{candidate.language}.{_preferred_subtitle_suffix(candidate)}"
+    with urlopen(candidate.url, timeout=DIRECT_SUBTITLE_TIMEOUT_SEC) as response:
+        direct_path.write_bytes(response.read())
+    return direct_path
 
 
 def download_audio_file(

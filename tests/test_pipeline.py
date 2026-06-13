@@ -13,9 +13,9 @@ from youtube_local_pipeline.config import (
     normalize_summary_provider,
     resolve_config_path,
 )
-from youtube_local_pipeline.download import choose_subtitle_candidate, write_metadata_artifacts
+from youtube_local_pipeline.download import _download_direct_subtitle, choose_subtitle_candidate, write_metadata_artifacts
 from youtube_local_pipeline.manifest import build_artifact_paths, initialize_workspace, resolve_video_root
-from youtube_local_pipeline.models import SourceKind, TranscriptSegment, TranscriptionDetails, VideoMetadata
+from youtube_local_pipeline.models import SourceKind, SubtitleCandidate, TranscriptSegment, TranscriptionDetails, VideoMetadata
 from youtube_local_pipeline.pipeline import _transcription_details_match, process_video
 from youtube_local_pipeline.qwen_cli import apply_mlx_qwen3_asr_patch
 from youtube_local_pipeline.subtitles import load_segments, write_transcript_artifacts
@@ -108,6 +108,36 @@ def test_write_metadata_artifacts_keeps_top_level_metadata_compact(tmp_path: Pat
         "automatic_caption_languages": ["sv"],
     }
     assert read_json(info_path) == raw_info
+
+
+def test_download_direct_subtitle_uses_timeout(monkeypatch, tmp_path: Path) -> None:
+    captured_call: dict[str, object] = {}
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return None
+
+        @staticmethod
+        def read() -> bytes:
+            return b"WEBVTT\n\n"
+
+    def fake_urlopen(url: str, timeout: int):
+        captured_call["url"] = url
+        captured_call["timeout"] = timeout
+        return FakeResponse()
+
+    monkeypatch.setattr("youtube_local_pipeline.download.urlopen", fake_urlopen)
+
+    path = _download_direct_subtitle(
+        tmp_path,
+        SubtitleCandidate(language="en", ext="vtt", url="https://example.com/subtitles.vtt"),
+    )
+
+    assert captured_call == {"url": "https://example.com/subtitles.vtt", "timeout": 30}
+    assert path.read_text(encoding="utf-8") == "WEBVTT\n\n"
 
 
 def test_process_video_dry_run_plans_asr_without_subtitles(monkeypatch, tmp_path: Path) -> None:
