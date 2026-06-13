@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import re
 import shutil
 import subprocess
@@ -56,7 +57,15 @@ def summarize_video(
         if (
             settings_match
             and len(manifest.chunk_summaries) == len(chunk_manifest)
-            and all((paths.root_dir / entry.output_path).exists() for entry in manifest.chunk_summaries)
+            and all(
+                _chunk_summary_matches_input(
+                    entry=entry,
+                    chunk=chunk,
+                    chunk_sha256=_chunk_file_sha256(paths.root_dir / chunk.path),
+                    root_dir=paths.root_dir,
+                )
+                for entry, chunk in zip(manifest.chunk_summaries, chunk_manifest, strict=True)
+            )
         ):
             wrap_markdown_file(paths.summary_final_path, width=FINAL_SUMMARY_WRAP_WIDTH)
             summary_payload = SummaryPayload.model_validate(read_json(paths.summary_payload_path))
@@ -74,16 +83,32 @@ def summarize_video(
     append_log(paths.pipeline_log_path, f"Starting {provider_label} summarization for {video_id}")
     summary_entries: list[ChunkSummaryEntry] = []
     rendered_chunk_summaries: list[str] = []
+    existing_chunk_summaries = {entry.index: entry for entry in manifest.chunk_summaries} if manifest else {}
+    reused_all_chunk_summaries = True
 
     for chunk in chunk_manifest:
         chunk_path = paths.root_dir / chunk.path
         chunk_text = chunk_path.read_text(encoding="utf-8").strip()
+        chunk_sha256 = _content_sha256(chunk_text)
         prompt_path = paths.summary_prompts_dir / f"chunk-{chunk.index:03}.prompt.txt"
         output_path = paths.summary_dir / f"chunk-{chunk.index:03}.md"
         prompt = build_chunk_summary_prompt(metadata=metadata, chunk=chunk, chunk_text=chunk_text)
         write_text(prompt_path, prompt)
+        existing_entry = existing_chunk_summaries.get(chunk.index)
+        chunk_output_reusable = (
+            settings_match
+            and existing_entry is not None
+            and _chunk_summary_matches_input(
+                entry=existing_entry,
+                chunk=chunk,
+                chunk_sha256=chunk_sha256,
+                root_dir=paths.root_dir,
+            )
+            and output_path == paths.root_dir / existing_entry.output_path
+        )
 
-        if force or not settings_match or not output_path.exists():
+        if force or not chunk_output_reusable:
+            reused_all_chunk_summaries = False
             rendered = run_summary_cli(
                 prompt=prompt,
                 output_path=output_path,
@@ -104,6 +129,7 @@ def summarize_video(
                 start_sec=chunk.start_sec,
                 end_sec=chunk.end_sec,
                 source_chunk_path=chunk.path,
+                source_chunk_sha256=chunk_sha256,
                 prompt_path=path_string(prompt_path, paths.root_dir),
                 output_path=path_string(output_path, paths.root_dir),
             )
@@ -115,7 +141,7 @@ def summarize_video(
         chunk_manifest=chunk_manifest,
     )
     write_text(paths.summary_final_prompt_path, final_prompt)
-    if force or not settings_match or not paths.summary_final_path.exists():
+    if force or not settings_match or not reused_all_chunk_summaries or not paths.summary_final_path.exists():
         run_summary_cli(
             prompt=final_prompt,
             output_path=paths.summary_final_path,
@@ -395,6 +421,28 @@ def _summary_settings_match(
         and manifest.summary_model == model
         and manifest.summary_thinking_level == thinking_level
     )
+
+
+def _chunk_summary_matches_input(
+    *,
+    entry: ChunkSummaryEntry,
+    chunk: ChunkManifestEntry,
+    chunk_sha256: str,
+    root_dir: Path,
+) -> bool:
+    if entry.index != chunk.index or entry.source_chunk_path != chunk.path:
+        return False
+    if entry.source_chunk_sha256 is not None and entry.source_chunk_sha256 != chunk_sha256:
+        return False
+    return (root_dir / entry.output_path).exists()
+
+
+def _chunk_file_sha256(path: Path) -> str:
+    return _content_sha256(path.read_text(encoding="utf-8").strip())
+
+
+def _content_sha256(content: str) -> str:
+    return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
 
 def _migrate_legacy_final_summary(

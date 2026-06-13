@@ -125,6 +125,7 @@ class ChunkSummaryEntry(BaseModel):
     start_sec: float
     end_sec: float
     source_chunk_path: str
+    source_chunk_sha256: str | None = None
     prompt_path: str
     output_path: str
 

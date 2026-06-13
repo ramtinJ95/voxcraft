@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -890,6 +891,98 @@ def test_summarize_video_reruns_when_summary_settings_change(monkeypatch, tmp_pa
     manifest = read_json(paths.summary_manifest_path)
     assert manifest["summary_provider"] == "pi"
     assert manifest["summary_command"] == "pi"
+
+
+def test_summarize_video_reruns_when_chunk_content_changes(monkeypatch, tmp_path: Path) -> None:
+    paths = initialize_workspace(build_artifact_paths(tmp_path / "video123", "video123"))
+    metadata = VideoMetadata(
+        video_id="video123",
+        url="https://www.youtube.com/watch?v=video123",
+        title="Summary Test",
+    )
+    write_json(paths.metadata_path, metadata.model_dump(mode="json"))
+    write_json(
+        paths.chunk_index_path,
+        [
+            {
+                "index": 1,
+                "start_sec": 0.0,
+                "end_sec": 12.0,
+                "path": "chunks/chunk-001.txt",
+                "char_count": 19,
+            }
+        ],
+    )
+    write_text(paths.chunks_dir / "chunk-001.txt", "changed chunk text\n")
+    write_json(
+        paths.summary_payload_path,
+        {
+            "video_id": "video123",
+            "url": metadata.url,
+            "title": metadata.title,
+            "source_kind": "subtitles",
+            "transcript_path": "transcript/clean.txt",
+            "segments_path": "transcript/segments.json",
+            "chunk_index_path": "chunks/index.json",
+            "chunk_count": 1,
+            "segment_count": 1,
+            "artifacts": {},
+            "transcription": None,
+            "notes": [],
+        },
+    )
+    write_text(paths.summary_dir / "chunk-001.md", "stale chunk summary\n")
+    write_text(paths.summary_final_path, "stale final\n")
+    write_json(
+        paths.summary_manifest_path,
+        {
+            "video_id": "video123",
+            "summary_provider": "codex",
+            "summary_command": "codex",
+            "summary_model": "gpt-5.5",
+            "summary_thinking_level": "high",
+            "chunk_summaries": [
+                {
+                    "index": 1,
+                    "start_sec": 0.0,
+                    "end_sec": 12.0,
+                    "source_chunk_path": "chunks/chunk-001.txt",
+                    "source_chunk_sha256": hashlib.sha256(b"old chunk text").hexdigest(),
+                    "prompt_path": "summary/prompts/chunk-001.prompt.txt",
+                    "output_path": "summary/chunk-001.md",
+                }
+            ],
+            "final_prompt_path": "summary/prompts/final.prompt.txt",
+            "final_summary_path": "final.md",
+        },
+    )
+    captured_prompts: list[str] = []
+
+    def fake_run_summary_cli(
+        prompt: str,
+        output_path: Path,
+        workdir: Path,
+        provider: str,
+        command: str,
+        model: str | None = None,
+        thinking_level: str | None = None,
+    ) -> str:
+        captured_prompts.append(prompt)
+        content = "# Final Summary\n\nfresh final\n" if "Combine these chunk summaries" in prompt else "fresh chunk\n"
+        write_text(output_path, content)
+        return content
+
+    monkeypatch.setattr("youtube_local_pipeline.summarize.run_summary_cli", fake_run_summary_cli)
+
+    summarize_video(video_id="video123", config=PipelineConfig(base_data_dir=tmp_path))
+
+    assert len(captured_prompts) == 2
+    assert (paths.summary_dir / "chunk-001.md").read_text(encoding="utf-8") == "fresh chunk\n"
+    assert paths.summary_final_path.read_text(encoding="utf-8") == "# Final Summary\n\nfresh final\n"
+    manifest = read_json(paths.summary_manifest_path)
+    assert manifest["chunk_summaries"][0]["source_chunk_sha256"] == hashlib.sha256(
+        b"changed chunk text"
+    ).hexdigest()
 
 
 def test_summarize_video_migrates_legacy_final_summary_without_rerunning_codex(tmp_path: Path) -> None:
