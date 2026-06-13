@@ -29,7 +29,7 @@ from .models import (
 )
 from .subtitles import load_segments, parse_subtitle_file, write_transcript_artifacts
 from .transcribe import build_transcription_request, transcribe_audio_file
-from .utils import append_log, path_string, read_json
+from .utils import append_log, extract_youtube_id, path_string, read_json
 
 
 def process_video(
@@ -46,6 +46,23 @@ def process_video(
     diarization_max_speakers: int = 8,
     dry_run: bool = False,
 ) -> ProcessResult:
+    cached_result = _try_load_cached_process_result(
+        url=url,
+        config=config,
+        language=language,
+        high_quality=high_quality,
+        force=force,
+        asr_backend=asr_backend,
+        model=model,
+        diarize=diarize,
+        diarization_num_speakers=diarization_num_speakers,
+        diarization_min_speakers=diarization_min_speakers,
+        diarization_max_speakers=diarization_max_speakers,
+        dry_run=dry_run,
+    )
+    if cached_result is not None:
+        return cached_result
+
     metadata, raw_info = probe_video(url)
     candidate = choose_subtitle_candidate(
         subtitles={key: [item.model_dump(mode="json") for item in value] for key, value in metadata.subtitles.items()},
@@ -307,6 +324,102 @@ def prepare_summary_input(
         normalized_audio_path=refreshed_summary.artifacts.get("audio_normalized") if refreshed_summary else None,
         transcription=refreshed_summary.transcription if refreshed_summary else None,
     )
+
+
+def _try_load_cached_process_result(
+    *,
+    url: str,
+    config: PipelineConfig,
+    language: str | None,
+    high_quality: bool,
+    force: bool,
+    asr_backend: str | None,
+    model: str | None,
+    diarize: bool,
+    diarization_num_speakers: int | None,
+    diarization_min_speakers: int,
+    diarization_max_speakers: int,
+    dry_run: bool,
+) -> ProcessResult | None:
+    if force or dry_run or not config.reuse_cached_artifacts:
+        return None
+
+    video_id = extract_youtube_id(url)
+    if video_id is None:
+        return None
+
+    paths = resolve_artifact_paths(config.base_data_dir, video_id)
+    if not paths.root_dir.exists() or not paths.metadata_path.exists():
+        return None
+
+    metadata_payload = read_json(paths.metadata_path)
+    if not isinstance(metadata_payload, dict):
+        return None
+
+    requested_source_kind = _cached_requested_source_kind(
+        metadata_payload=metadata_payload,
+        config=config,
+        language=language,
+    )
+    if requested_source_kind is None:
+        return None
+
+    requested_transcription = _planned_transcription_details(
+        config=config,
+        language=language,
+        high_quality=high_quality,
+        asr_backend=asr_backend,
+        model=model,
+        diarize=diarize,
+        diarization_num_speakers=diarization_num_speakers,
+        diarization_min_speakers=diarization_min_speakers,
+        diarization_max_speakers=diarization_max_speakers,
+        source_kind=requested_source_kind,
+    )
+    if not _can_reuse_cached_artifacts(
+        paths,
+        config=config,
+        force=force,
+        requested_source_kind=requested_source_kind,
+        requested_transcription=requested_transcription,
+    ):
+        return None
+
+    metadata = VideoMetadata.model_validate(metadata_payload)
+    append_log(paths.pipeline_log_path, "Reusing cached final artifacts without probing metadata")
+    return _load_cached_result(metadata, paths)
+
+
+def _cached_requested_source_kind(
+    *,
+    metadata_payload: dict[str, object],
+    config: PipelineConfig,
+    language: str | None,
+) -> SourceKind | None:
+    if not config.subtitle_first:
+        return SourceKind.LOCAL_ASR
+
+    subtitle_languages = _cached_subtitle_languages(metadata_payload)
+    if not subtitle_languages:
+        return SourceKind.LOCAL_ASR
+
+    preferred_language = (language or config.language_preference).lower()
+    for candidate_language in ("en", preferred_language):
+        if candidate_language and candidate_language in subtitle_languages:
+            return SourceKind.MANUAL_SUBTITLES
+    return SourceKind.LOCAL_ASR
+
+
+def _cached_subtitle_languages(metadata_payload: dict[str, object]) -> set[str]:
+    raw_languages = metadata_payload.get("subtitle_languages")
+    if isinstance(raw_languages, list):
+        return {str(language).lower() for language in raw_languages}
+
+    raw_subtitles = metadata_payload.get("subtitles")
+    if isinstance(raw_subtitles, dict):
+        return {str(language).lower() for language in raw_subtitles}
+
+    return set()
 
 
 def _can_reuse_cached_artifacts(
