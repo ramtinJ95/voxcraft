@@ -127,7 +127,7 @@ def write_metadata_artifacts(
     metadata_path: Path,
     info_path: Path,
 ) -> None:
-    write_json(metadata_path, metadata.model_dump(mode="json"))
+    write_json(metadata_path, _metadata_artifact_payload(metadata))
     write_json(info_path, raw_info)
 
 
@@ -215,6 +215,19 @@ def _subtitle_map(raw_map: dict[str, list[dict[str, Any]]] | None) -> dict[str, 
             for track in tracks
         ]
     return mapped
+
+
+def _metadata_artifact_payload(metadata: VideoMetadata) -> dict[str, Any]:
+    payload = metadata.model_dump(
+        mode="json",
+        exclude={
+            "subtitles",
+            "automatic_captions",
+        },
+    )
+    payload["subtitle_languages"] = sorted(metadata.subtitles)
+    payload["automatic_caption_languages"] = sorted(metadata.automatic_captions)
+    return payload
 
 
 def _find_standardized_subtitle_file(source_dir: Path, language: str) -> Path | None:

@@ -315,7 +315,9 @@ If a date is unavailable, the folder falls back to `<title-slug>--<youtube_id>/`
 
 Common files:
 - `metadata.json`
+  Compact video metadata and subtitle language lists
 - `source/info.json`
+  Full `yt-dlp` probe output
 - `source/audio.<ext>`
 - `source/audio.wav`
 - `transcript/raw.txt`

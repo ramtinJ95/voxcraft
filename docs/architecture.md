@@ -330,6 +330,10 @@ final.md
 logs/pipeline.log
 ```
 
+`metadata.json` is intentionally compact: it contains stable video fields and subtitle
+language lists. The full `yt-dlp` probe payload, including transient subtitle URLs and
+format details, is kept in `source/info.json`.
+
 Not every file appears on every run:
 - no `speaker_segments.json` unless diarization is enabled
 - no `summary/*` outputs unless summarization is run

@@ -12,7 +12,7 @@ from youtube_local_pipeline.config import (
     normalize_summary_provider,
     resolve_config_path,
 )
-from youtube_local_pipeline.download import choose_subtitle_candidate
+from youtube_local_pipeline.download import choose_subtitle_candidate, write_metadata_artifacts
 from youtube_local_pipeline.manifest import build_artifact_paths, initialize_workspace, resolve_video_root
 from youtube_local_pipeline.models import SourceKind, TranscriptSegment, TranscriptionDetails, VideoMetadata
 from youtube_local_pipeline.pipeline import _transcription_details_match, process_video
@@ -49,6 +49,64 @@ def test_choose_subtitle_candidate_ignores_auto_captions_by_default() -> None:
     )
 
     assert candidate is None
+
+
+def test_write_metadata_artifacts_keeps_top_level_metadata_compact(tmp_path: Path) -> None:
+    metadata = VideoMetadata(
+        video_id="compact123",
+        url="https://www.youtube.com/watch?v=compact123",
+        title="Compact Metadata",
+        channel="Example Channel",
+        duration_sec=120.0,
+        upload_date="2026-06-11",
+        subtitles={
+            "en": [
+                {
+                    "language": "en",
+                    "ext": "vtt",
+                    "url": "https://example.com/transient-subtitle-url",
+                    "name": "English",
+                }
+            ]
+        },
+        automatic_captions={
+            "sv": [
+                {
+                    "language": "sv",
+                    "ext": "vtt",
+                    "url": "https://example.com/transient-auto-caption-url",
+                    "name": "Swedish",
+                }
+            ]
+        },
+    )
+    raw_info = {
+        "id": "compact123",
+        "title": "Compact Metadata",
+        "subtitles": {"en": [{"url": "https://example.com/transient-subtitle-url"}]},
+    }
+    metadata_path = tmp_path / "metadata.json"
+    info_path = tmp_path / "source" / "info.json"
+
+    write_metadata_artifacts(
+        metadata=metadata,
+        raw_info=raw_info,
+        metadata_path=metadata_path,
+        info_path=info_path,
+    )
+
+    compact_metadata = read_json(metadata_path)
+    assert compact_metadata == {
+        "video_id": "compact123",
+        "url": "https://www.youtube.com/watch?v=compact123",
+        "title": "Compact Metadata",
+        "channel": "Example Channel",
+        "duration_sec": 120.0,
+        "upload_date": "2026-06-11",
+        "subtitle_languages": ["en"],
+        "automatic_caption_languages": ["sv"],
+    }
+    assert read_json(info_path) == raw_info
 
 
 def test_process_video_dry_run_plans_asr_without_subtitles(monkeypatch, tmp_path: Path) -> None:
