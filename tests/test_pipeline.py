@@ -4,6 +4,7 @@ import hashlib
 from pathlib import Path
 from types import SimpleNamespace
 
+from youtube_local_pipeline.cli import _command_status
 from youtube_local_pipeline.config import (
     CONFIG_ENV_VAR,
     PipelineConfig,
@@ -282,6 +283,12 @@ def test_resolve_qwen_command_args_falls_back_to_module_wrapper(monkeypatch) -> 
     resolved = resolve_qwen_command_args("yt-transcriber-qwen")
 
     assert resolved == ["/tmp/python", "-m", "youtube_local_pipeline.qwen_cli"]
+
+
+def test_command_status_marks_missing_required_tools() -> None:
+    assert _command_status(None, required=True) == "missing"
+    assert _command_status(None, required=False) == "optional"
+    assert _command_status("/usr/local/bin/tool", required=True) == "ok"
 
 
 def test_process_video_dry_run_applies_explicit_model_override(monkeypatch, tmp_path: Path) -> None:
