@@ -12,7 +12,7 @@ from youtube_local_pipeline.config import (
     normalize_summary_provider,
     resolve_config_path,
 )
-from youtube_local_pipeline.download import choose_subtitle_candidate
+from youtube_local_pipeline.download import choose_subtitle_candidate, write_metadata_artifacts
 from youtube_local_pipeline.manifest import build_artifact_paths, initialize_workspace, resolve_video_root
 from youtube_local_pipeline.models import SourceKind, TranscriptSegment, TranscriptionDetails, VideoMetadata
 from youtube_local_pipeline.pipeline import _transcription_details_match, process_video
@@ -51,6 +51,64 @@ def test_choose_subtitle_candidate_ignores_auto_captions_by_default() -> None:
     assert candidate is None
 
 
+def test_write_metadata_artifacts_keeps_top_level_metadata_compact(tmp_path: Path) -> None:
+    metadata = VideoMetadata(
+        video_id="compact123",
+        url="https://www.youtube.com/watch?v=compact123",
+        title="Compact Metadata",
+        channel="Example Channel",
+        duration_sec=120.0,
+        upload_date="2026-06-11",
+        subtitles={
+            "en": [
+                {
+                    "language": "en",
+                    "ext": "vtt",
+                    "url": "https://example.com/transient-subtitle-url",
+                    "name": "English",
+                }
+            ]
+        },
+        automatic_captions={
+            "sv": [
+                {
+                    "language": "sv",
+                    "ext": "vtt",
+                    "url": "https://example.com/transient-auto-caption-url",
+                    "name": "Swedish",
+                }
+            ]
+        },
+    )
+    raw_info = {
+        "id": "compact123",
+        "title": "Compact Metadata",
+        "subtitles": {"en": [{"url": "https://example.com/transient-subtitle-url"}]},
+    }
+    metadata_path = tmp_path / "metadata.json"
+    info_path = tmp_path / "source" / "info.json"
+
+    write_metadata_artifacts(
+        metadata=metadata,
+        raw_info=raw_info,
+        metadata_path=metadata_path,
+        info_path=info_path,
+    )
+
+    compact_metadata = read_json(metadata_path)
+    assert compact_metadata == {
+        "video_id": "compact123",
+        "url": "https://www.youtube.com/watch?v=compact123",
+        "title": "Compact Metadata",
+        "channel": "Example Channel",
+        "duration_sec": 120.0,
+        "upload_date": "2026-06-11",
+        "subtitle_languages": ["en"],
+        "automatic_caption_languages": ["sv"],
+    }
+    assert read_json(info_path) == raw_info
+
+
 def test_process_video_dry_run_plans_asr_without_subtitles(monkeypatch, tmp_path: Path) -> None:
     metadata = VideoMetadata(
         video_id="abc123",
@@ -78,6 +136,33 @@ def test_process_video_dry_run_plans_asr_without_subtitles(monkeypatch, tmp_path
     assert result.transcription.model == "mlx-community/Qwen3-ASR-1.7B-8bit"
     assert result.transcription.language == "en"
     assert result.artifact_root == (tmp_path / "videos" / "test-video--abc123")
+
+
+def test_process_video_dry_run_uses_upload_date_in_new_workspace_name(monkeypatch, tmp_path: Path) -> None:
+    metadata = VideoMetadata(
+        video_id="dated123",
+        url="https://www.youtube.com/watch?v=dated123",
+        title="Dated Test Video",
+        upload_date="2026-06-11",
+        subtitles={},
+        automatic_captions={},
+    )
+
+    def fake_probe_video(url: str) -> tuple[VideoMetadata, dict[str, object]]:
+        return metadata, {"id": metadata.video_id, "webpage_url": metadata.url}
+
+    monkeypatch.setattr("youtube_local_pipeline.pipeline.probe_video", fake_probe_video)
+
+    result = process_video(
+        url=metadata.url,
+        config=PipelineConfig(base_data_dir=tmp_path / "videos"),
+        language="en",
+        dry_run=True,
+    )
+
+    assert result.artifact_root == (
+        tmp_path / "videos" / "2026-06-11--dated-test-video--dated123"
+    )
 
 
 def test_resolve_qwen_command_args_falls_back_to_module_wrapper(monkeypatch) -> None:
@@ -790,8 +875,31 @@ def test_resolve_video_root_prefers_human_readable_name_and_finds_legacy_dirs(tm
     base_dir = tmp_path / "videos"
     base_dir.mkdir()
 
-    assert resolve_video_root(base_dir, "abc123", title="Test Video") == base_dir / "test-video--abc123"
+    assert resolve_video_root(
+        base_dir,
+        "abc123",
+        title="Test Video",
+        upload_date="2026-06-11",
+    ) == base_dir / "2026-06-11--test-video--abc123"
 
     legacy = base_dir / "abc123"
     legacy.mkdir()
-    assert resolve_video_root(base_dir, "abc123", title="Changed Title") == legacy
+    assert resolve_video_root(
+        base_dir,
+        "abc123",
+        title="Changed Title",
+        upload_date="2026-06-12",
+    ) == legacy
+
+
+def test_resolve_video_root_finds_existing_undated_human_readable_dir(tmp_path: Path) -> None:
+    base_dir = tmp_path / "videos"
+    existing = base_dir / "test-video--abc123"
+    existing.mkdir(parents=True)
+
+    assert resolve_video_root(
+        base_dir,
+        "abc123",
+        title="Changed Title",
+        upload_date="2026-06-12",
+    ) == existing

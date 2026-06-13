@@ -25,6 +25,7 @@ class VideoMetadata(BaseModel):
     title: str | None = None
     channel: str | None = None
     duration_sec: float | None = None
+    upload_date: str | None = None
     subtitles: dict[str, list[SubtitleCandidate]] = Field(default_factory=dict)
     automatic_captions: dict[str, list[SubtitleCandidate]] = Field(default_factory=dict)
 

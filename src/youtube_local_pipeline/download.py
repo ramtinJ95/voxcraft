@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 from urllib.request import urlopen
@@ -113,6 +114,7 @@ def probe_video(url: str) -> tuple[VideoMetadata, dict[str, Any]]:
         title=sanitized.get("title"),
         channel=sanitized.get("channel") or sanitized.get("uploader"),
         duration_sec=float(sanitized["duration"]) if sanitized.get("duration") else None,
+        upload_date=_normalize_yt_dlp_date(sanitized.get("upload_date") or sanitized.get("release_date")),
         subtitles=_subtitle_map(sanitized.get("subtitles")),
         automatic_captions=_subtitle_map(sanitized.get("automatic_captions")),
     )
@@ -125,7 +127,7 @@ def write_metadata_artifacts(
     metadata_path: Path,
     info_path: Path,
 ) -> None:
-    write_json(metadata_path, metadata.model_dump(mode="json"))
+    write_json(metadata_path, _metadata_artifact_payload(metadata))
     write_json(info_path, raw_info)
 
 
@@ -215,6 +217,19 @@ def _subtitle_map(raw_map: dict[str, list[dict[str, Any]]] | None) -> dict[str, 
     return mapped
 
 
+def _metadata_artifact_payload(metadata: VideoMetadata) -> dict[str, Any]:
+    payload = metadata.model_dump(
+        mode="json",
+        exclude={
+            "subtitles",
+            "automatic_captions",
+        },
+    )
+    payload["subtitle_languages"] = sorted(metadata.subtitles)
+    payload["automatic_caption_languages"] = sorted(metadata.automatic_captions)
+    return payload
+
+
 def _find_standardized_subtitle_file(source_dir: Path, language: str) -> Path | None:
     for suffix in (".vtt", ".srt"):
         candidate = source_dir / f"subtitles.{language}{suffix}"
@@ -262,3 +277,12 @@ def _preferred_subtitle_suffix(candidate: SubtitleCandidate) -> str:
     if candidate.ext.lower() in {"vtt", "srt"}:
         return candidate.ext.lower()
     return "vtt"
+
+
+def _normalize_yt_dlp_date(value: object) -> str | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        return datetime.strptime(value, "%Y%m%d").date().isoformat()
+    except ValueError:
+        return None

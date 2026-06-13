@@ -54,9 +54,15 @@ def resolve_artifact_paths(
     base_dir: Path,
     video_id: str,
     title: str | None = None,
+    upload_date: str | None = None,
 ) -> ArtifactPaths:
     return build_artifact_paths(
-        root_dir=resolve_video_root(base_dir=base_dir, video_id=video_id, title=title),
+        root_dir=resolve_video_root(
+            base_dir=base_dir,
+            video_id=video_id,
+            title=title,
+            upload_date=upload_date,
+        ),
         video_id=video_id,
     )
 
@@ -65,11 +71,12 @@ def resolve_video_root(
     base_dir: Path,
     video_id: str,
     title: str | None = None,
+    upload_date: str | None = None,
 ) -> Path:
     existing = find_existing_video_root(base_dir=base_dir, video_id=video_id)
     if existing is not None:
         return existing
-    return base_dir / human_video_dirname(video_id=video_id, title=title)
+    return base_dir / human_video_dirname(video_id=video_id, title=title, date_prefix=upload_date)
 
 
 def find_existing_video_root(base_dir: Path, video_id: str) -> Path | None:

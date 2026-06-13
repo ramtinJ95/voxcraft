@@ -209,8 +209,8 @@ class PipelineConfig(BaseModel):
         resolved_provider = normalize_summary_provider(provider or self.summary_provider)
         return self.summary_profiles[resolved_provider]
 
-    def video_root(self, video_id: str, title: str | None = None) -> Path:
-        return resolve_video_root(self.base_data_dir, video_id=video_id, title=title)
+    def video_root(self, video_id: str, title: str | None = None, upload_date: str | None = None) -> Path:
+        return resolve_video_root(self.base_data_dir, video_id=video_id, title=title, upload_date=upload_date)
 
     def transcription_profile(
         self,
