@@ -255,10 +255,16 @@ Creates the workspace layout and summary handoff payload.
 Workspace root:
 
 ```text
-data/videos/<title-slug>--<youtube_id>/
+data/videos/<upload-date>--<title-slug>--<youtube_id>/
 ```
 
-This module also preserves compatibility with older `<youtube_id>`-only directories by resolving existing workspaces before creating new ones.
+The upload date is formatted as `YYYY-MM-DD` when YouTube exposes it, which keeps the
+folder list chronologically sortable. If no upload date is available, the folder falls
+back to `<title-slug>--<youtube_id>/`.
+
+This module also preserves compatibility with older `<youtube_id>`-only and
+`<title-slug>--<youtube_id>` directories by resolving existing workspaces before
+creating new ones.
 
 ### Summarization
 

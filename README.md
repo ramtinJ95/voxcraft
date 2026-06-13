@@ -10,7 +10,8 @@ The workflow is:
 - chunk the transcript
 - optionally summarize chunks and the full video through a supported agent CLI
 
-Outputs are written per video under `data/videos/<title-slug>--<youtube_id>/`.
+Outputs are written per video under `data/videos/<upload-date>--<title-slug>--<youtube_id>/`
+when YouTube exposes an upload date. Older undated workspaces are still reused by video ID.
 
 For the implementation-level overview, see [docs/architecture.md](docs/architecture.md).
 
@@ -306,8 +307,11 @@ Important policy decisions:
 Each processed video gets a folder like:
 
 ```text
-data/videos/<title-slug>--<youtube_id>/
+data/videos/<upload-date>--<title-slug>--<youtube_id>/
 ```
+
+The upload date uses `YYYY-MM-DD`, so normal filename sorting groups videos chronologically.
+If a date is unavailable, the folder falls back to `<title-slug>--<youtube_id>/`.
 
 Common files:
 - `metadata.json`
@@ -332,7 +336,7 @@ Common files:
 Example workspace after a successful run:
 
 ```text
-data/videos/how-hardware-makes-threads-less-of-a-nightmare--IMceN4_rieo/
+data/videos/2026-06-11--how-hardware-makes-threads-less-of-a-nightmare--IMceN4_rieo/
 ├── metadata.json
 ├── final.md
 ├── source/

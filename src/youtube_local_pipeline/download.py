@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 from urllib.request import urlopen
@@ -113,6 +114,7 @@ def probe_video(url: str) -> tuple[VideoMetadata, dict[str, Any]]:
         title=sanitized.get("title"),
         channel=sanitized.get("channel") or sanitized.get("uploader"),
         duration_sec=float(sanitized["duration"]) if sanitized.get("duration") else None,
+        upload_date=_normalize_yt_dlp_date(sanitized.get("upload_date") or sanitized.get("release_date")),
         subtitles=_subtitle_map(sanitized.get("subtitles")),
         automatic_captions=_subtitle_map(sanitized.get("automatic_captions")),
     )
@@ -262,3 +264,12 @@ def _preferred_subtitle_suffix(candidate: SubtitleCandidate) -> str:
     if candidate.ext.lower() in {"vtt", "srt"}:
         return candidate.ext.lower()
     return "vtt"
+
+
+def _normalize_yt_dlp_date(value: object) -> str | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        return datetime.strptime(value, "%Y%m%d").date().isoformat()
+    except ValueError:
+        return None

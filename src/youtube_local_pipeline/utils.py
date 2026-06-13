@@ -56,19 +56,32 @@ def sanitize_filename(value: str) -> str:
     return sanitized or "untitled"
 
 
-def human_video_dirname(video_id: str, title: str | None, max_slug_length: int = 80) -> str:
+def human_video_dirname(
+    video_id: str,
+    title: str | None,
+    max_slug_length: int = 80,
+    date_prefix: str | None = None,
+) -> str:
     if not title:
-        return video_id
+        return _with_date_prefix(video_id, date_prefix)
 
     slug = sanitize_filename(title).strip("-._").lower()
     if not slug or slug == "untitled":
-        return video_id
+        return _with_date_prefix(video_id, date_prefix)
 
     truncated = slug[:max_slug_length].rstrip("-._")
     if not truncated:
-        return video_id
+        return _with_date_prefix(video_id, date_prefix)
 
-    return f"{truncated}--{video_id}"
+    return _with_date_prefix(f"{truncated}--{video_id}", date_prefix)
+
+
+def _with_date_prefix(dirname: str, date_prefix: str | None) -> str:
+    if not date_prefix:
+        return dirname
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date_prefix):
+        return dirname
+    return f"{date_prefix}--{dirname}"
 
 
 def extract_youtube_id(url: str) -> str | None:

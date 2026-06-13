@@ -70,13 +70,22 @@ def process_video(
         return ProcessResult(
             metadata=metadata,
             source_kind=source_kind,
-            artifact_root=config.video_root(metadata.video_id, title=metadata.title),
+            artifact_root=config.video_root(
+                metadata.video_id,
+                title=metadata.title,
+                upload_date=metadata.upload_date,
+            ),
             notes=notes,
             transcription=transcription_details,
         )
 
     paths = initialize_workspace(
-        resolve_artifact_paths(config.base_data_dir, metadata.video_id, title=metadata.title)
+        resolve_artifact_paths(
+            config.base_data_dir,
+            metadata.video_id,
+            title=metadata.title,
+            upload_date=metadata.upload_date,
+        )
     )
     append_log(paths.pipeline_log_path, f"Starting pipeline for {metadata.url}")
     write_metadata_artifacts(

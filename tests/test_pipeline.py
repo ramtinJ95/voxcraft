@@ -80,6 +80,33 @@ def test_process_video_dry_run_plans_asr_without_subtitles(monkeypatch, tmp_path
     assert result.artifact_root == (tmp_path / "videos" / "test-video--abc123")
 
 
+def test_process_video_dry_run_uses_upload_date_in_new_workspace_name(monkeypatch, tmp_path: Path) -> None:
+    metadata = VideoMetadata(
+        video_id="dated123",
+        url="https://www.youtube.com/watch?v=dated123",
+        title="Dated Test Video",
+        upload_date="2026-06-11",
+        subtitles={},
+        automatic_captions={},
+    )
+
+    def fake_probe_video(url: str) -> tuple[VideoMetadata, dict[str, object]]:
+        return metadata, {"id": metadata.video_id, "webpage_url": metadata.url}
+
+    monkeypatch.setattr("youtube_local_pipeline.pipeline.probe_video", fake_probe_video)
+
+    result = process_video(
+        url=metadata.url,
+        config=PipelineConfig(base_data_dir=tmp_path / "videos"),
+        language="en",
+        dry_run=True,
+    )
+
+    assert result.artifact_root == (
+        tmp_path / "videos" / "2026-06-11--dated-test-video--dated123"
+    )
+
+
 def test_resolve_qwen_command_args_falls_back_to_module_wrapper(monkeypatch) -> None:
     monkeypatch.setattr("youtube_local_pipeline.transcribe.shutil.which", lambda command: None)
     monkeypatch.setattr("youtube_local_pipeline.transcribe.sys.executable", "/tmp/python")
@@ -790,8 +817,31 @@ def test_resolve_video_root_prefers_human_readable_name_and_finds_legacy_dirs(tm
     base_dir = tmp_path / "videos"
     base_dir.mkdir()
 
-    assert resolve_video_root(base_dir, "abc123", title="Test Video") == base_dir / "test-video--abc123"
+    assert resolve_video_root(
+        base_dir,
+        "abc123",
+        title="Test Video",
+        upload_date="2026-06-11",
+    ) == base_dir / "2026-06-11--test-video--abc123"
 
     legacy = base_dir / "abc123"
     legacy.mkdir()
-    assert resolve_video_root(base_dir, "abc123", title="Changed Title") == legacy
+    assert resolve_video_root(
+        base_dir,
+        "abc123",
+        title="Changed Title",
+        upload_date="2026-06-12",
+    ) == legacy
+
+
+def test_resolve_video_root_finds_existing_undated_human_readable_dir(tmp_path: Path) -> None:
+    base_dir = tmp_path / "videos"
+    existing = base_dir / "test-video--abc123"
+    existing.mkdir(parents=True)
+
+    assert resolve_video_root(
+        base_dir,
+        "abc123",
+        title="Changed Title",
+        upload_date="2026-06-12",
+    ) == existing
