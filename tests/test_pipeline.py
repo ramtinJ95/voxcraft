@@ -492,6 +492,25 @@ def test_transcription_details_match_rejects_cached_backend_mismatch() -> None:
     assert _transcription_details_match(cached, requested) is False
 
 
+def test_transcription_details_match_rejects_fingerprint_mismatch() -> None:
+    cached = TranscriptionDetails(
+        backend="qwen3-asr",
+        model="mlx-community/Qwen3-ASR-1.7B-8bit",
+        language="en",
+        diarized=False,
+        fingerprint="old-fingerprint",
+    )
+    requested = TranscriptionDetails(
+        backend="qwen3-asr",
+        model="mlx-community/Qwen3-ASR-1.7B-8bit",
+        language="en",
+        diarized=False,
+        fingerprint="new-fingerprint",
+    )
+
+    assert _transcription_details_match(cached, requested) is False
+
+
 def test_normalize_summary_provider_accepts_common_aliases() -> None:
     assert normalize_summary_provider("codex") == "codex"
     assert normalize_summary_provider("openai") == "codex"

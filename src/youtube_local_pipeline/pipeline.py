@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 import json
 
@@ -59,6 +60,8 @@ def process_video(
         model=model,
         diarize=diarize,
         diarization_num_speakers=diarization_num_speakers,
+        diarization_min_speakers=diarization_min_speakers,
+        diarization_max_speakers=diarization_max_speakers,
         source_kind=source_kind,
     )
 
@@ -178,6 +181,15 @@ def process_video(
             whisper_cpp_threads=config.whisper_cpp_threads,
             output_base=paths.asr_output_json_path.with_suffix(""),
         )
+        transcription_details = _with_transcription_fingerprint(
+            transcription_result.details,
+            config=config,
+            request=request,
+            diarize=diarize,
+            diarization_num_speakers=diarization_num_speakers,
+            diarization_min_speakers=diarization_min_speakers,
+            diarization_max_speakers=diarization_max_speakers,
+        )
         if transcription_result.speaker_segments:
             paths.speaker_segments_path.write_text(
                 json_dumps(transcription_result.speaker_segments),
@@ -190,7 +202,6 @@ def process_video(
             segments=transcription_result.segments,
             raw_text=transcription_result.text,
         )
-        transcription_details = transcription_result.details
         notes.append(
             f"Local ASR completed with {transcription_details.backend} "
             f"using {transcription_details.model}."
@@ -360,6 +371,9 @@ def _transcription_details_match(
     if cached is None:
         return False
 
+    if cached.fingerprint is not None or requested.fingerprint is not None:
+        return cached.fingerprint is not None and cached.fingerprint == requested.fingerprint
+
     if cached.backend != requested.backend:
         return False
     if cached.model != requested.model:
@@ -451,6 +465,8 @@ def _planned_transcription_details(
     model: str | None,
     diarize: bool,
     diarization_num_speakers: int | None,
+    diarization_min_speakers: int,
+    diarization_max_speakers: int,
     source_kind: SourceKind,
 ) -> TranscriptionDetails | None:
     if source_kind != SourceKind.LOCAL_ASR:
@@ -463,7 +479,7 @@ def _planned_transcription_details(
         asr_backend=asr_backend,
         model=model,
     )
-    return TranscriptionDetails(
+    details = TranscriptionDetails(
         backend=request.backend,
         model=request.model,
         language=request.language,
@@ -471,6 +487,87 @@ def _planned_transcription_details(
         diarized=diarize if request.backend == "qwen3-asr" else False,
         speaker_count=diarization_num_speakers if diarize else None,
     )
+    return _with_transcription_fingerprint(
+        details,
+        config=config,
+        request=request,
+        diarize=diarize,
+        diarization_num_speakers=diarization_num_speakers,
+        diarization_min_speakers=diarization_min_speakers,
+        diarization_max_speakers=diarization_max_speakers,
+    )
+
+
+def _with_transcription_fingerprint(
+    details: TranscriptionDetails,
+    *,
+    config: PipelineConfig,
+    request,
+    diarize: bool,
+    diarization_num_speakers: int | None,
+    diarization_min_speakers: int,
+    diarization_max_speakers: int,
+) -> TranscriptionDetails:
+    return details.model_copy(
+        update={
+            "fingerprint": _transcription_fingerprint(
+                config=config,
+                request=request,
+                diarize=diarize,
+                diarization_num_speakers=diarization_num_speakers,
+                diarization_min_speakers=diarization_min_speakers,
+                diarization_max_speakers=diarization_max_speakers,
+            )
+        }
+    )
+
+
+def _transcription_fingerprint(
+    *,
+    config: PipelineConfig,
+    request,
+    diarize: bool,
+    diarization_num_speakers: int | None,
+    diarization_min_speakers: int,
+    diarization_max_speakers: int,
+) -> str:
+    payload: dict[str, object] = {
+        "backend": request.backend,
+        "model": request.model,
+        "language": request.language or None,
+        "audio_channels": config.audio_channels,
+        "audio_sample_rate": config.audio_sample_rate,
+    }
+    if request.backend == "qwen3-asr":
+        payload.update(
+            {
+                "context": config.qwen_context,
+                "diarize": diarize,
+                "dtype": config.qwen_dtype,
+                "draft_model": config.qwen_draft_model,
+                "forced_aligner": config.qwen_forced_aligner,
+                "num_draft_tokens": config.qwen_num_draft_tokens,
+                "num_speakers": diarization_num_speakers if diarize else None,
+                "min_speakers": diarization_min_speakers if diarize else None,
+                "max_speakers": diarization_max_speakers if diarize else None,
+                "pyannote_model": config.qwen_pyannote_model if diarize else None,
+            }
+        )
+    elif request.backend == "whisper-cpp":
+        payload.update(
+            {
+                "command": config.whisper_cpp_command,
+                "model_dir": _fingerprint_path(config.whisper_cpp_model_dir),
+                "model_path": _fingerprint_path(config.whisper_cpp_model_path),
+                "threads": config.whisper_cpp_threads,
+            }
+        )
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def _fingerprint_path(path: Path | None) -> str | None:
+    return str(path.expanduser()) if path is not None else None
 
 
 def _load_summary_payload(path: Path) -> SummaryPayload | None:
