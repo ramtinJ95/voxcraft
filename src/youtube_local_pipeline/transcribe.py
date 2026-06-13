@@ -744,6 +744,7 @@ def _assign_speakers_to_word_segments(
     speaker_turns: list[dict[str, object]],
 ) -> list[dict[str, object]]:
     labeled: list[dict[str, object]] = []
+    turn_index = 0
     for item in raw_segments:
         if not isinstance(item, dict):
             continue
@@ -754,32 +755,44 @@ def _assign_speakers_to_word_segments(
         end = float(item.get("end", start))
         if end < start:
             end = start
+        while turn_index < len(speaker_turns) and float(speaker_turns[turn_index].get("end", 0.0)) < start:
+            turn_index += 1
         labeled.append(
             {
                 **item,
                 "start": start,
                 "end": end,
                 "text": text,
-                "speaker": _speaker_for_interval(start, end, speaker_turns),
+                "speaker": _speaker_for_interval_from_turn_index(
+                    start=start,
+                    end=end,
+                    speaker_turns=speaker_turns,
+                    turn_index=turn_index,
+                ),
             }
         )
     return labeled
 
 
-def _speaker_for_interval(
+def _speaker_for_interval_from_turn_index(
+    *,
     start: float,
     end: float,
     speaker_turns: list[dict[str, object]],
+    turn_index: int,
 ) -> str:
     if not speaker_turns:
         return DEFAULT_SPEAKER_LABEL
 
     midpoint = (start + end) / 2.0
-    best_speaker = _normalize_speaker(str(speaker_turns[0].get("speaker", DEFAULT_SPEAKER_LABEL))) or DEFAULT_SPEAKER_LABEL
+    first_turn = speaker_turns[min(turn_index, len(speaker_turns) - 1)]
+    best_speaker = _normalize_speaker(str(first_turn.get("speaker", DEFAULT_SPEAKER_LABEL))) or DEFAULT_SPEAKER_LABEL
     best_overlap = -1.0
-    for turn in speaker_turns:
+    for turn in speaker_turns[turn_index:]:
         turn_start = float(turn.get("start", 0.0))
         turn_end = float(turn.get("end", turn_start))
+        if turn_start > end and best_overlap >= 0.0:
+            break
         overlap = max(0.0, min(end, turn_end) - max(start, turn_start))
         if overlap > best_overlap:
             best_overlap = overlap
