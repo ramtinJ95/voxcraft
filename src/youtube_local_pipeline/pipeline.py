@@ -260,39 +260,35 @@ def rechunk_video(
     video_id: str,
     config: PipelineConfig,
 ) -> ProcessResult:
-    paths = initialize_workspace(resolve_artifact_paths(config.base_data_dir, video_id))
-    metadata = VideoMetadata.model_validate(read_json(paths.metadata_path))
-    summary = _load_summary_payload(paths.summary_payload_path)
-    segments = load_segments(paths.segments_path)
-    chunk_manifest = _write_summary_artifacts(
-        metadata=metadata,
-        source_kind=summary.source_kind if summary else SourceKind.LOCAL_ASR,
-        paths=paths,
-        segments=segments,
-        notes=summary.notes if summary else ["Chunk files regenerated from existing segments."],
-        transcription=summary.transcription if summary else None,
-        subtitle_path=_resolve_artifact_path(paths, summary, "subtitle_source"),
-        audio_source_path=_resolve_artifact_path(paths, summary, "audio_source"),
-        normalized_audio_path=_resolve_artifact_path(paths, summary, "audio_normalized"),
-        chunk_target_chars=config.chunk_target_chars,
-    )
-    append_log(paths.pipeline_log_path, f"Rechunked transcript into {len(chunk_manifest)} chunks")
-    return ProcessResult(
-        metadata=metadata,
-        source_kind=summary.source_kind if summary else SourceKind.LOCAL_ASR,
-        artifact_root=paths.root_dir,
-        chunk_count=len(chunk_manifest),
-        notes=summary.notes if summary else [],
-        subtitle_path=summary.artifacts.get("subtitle_source") if summary else None,
-        audio_source_path=summary.artifacts.get("audio_source") if summary else None,
-        normalized_audio_path=summary.artifacts.get("audio_normalized") if summary else None,
-        transcription=summary.transcription if summary else None,
+    return _rebuild_summary_artifacts_from_segments(
+        video_id=video_id,
+        config=config,
+        fallback_note="Chunk files regenerated from existing segments.",
+        log_message="Rechunked transcript into",
+        reload_summary_after_write=False,
     )
 
 
 def prepare_summary_input(
     video_id: str,
     config: PipelineConfig,
+) -> ProcessResult:
+    return _rebuild_summary_artifacts_from_segments(
+        video_id=video_id,
+        config=config,
+        fallback_note="Summary payload regenerated from existing segments.",
+        log_message="Prepared summary payload with",
+        reload_summary_after_write=True,
+    )
+
+
+def _rebuild_summary_artifacts_from_segments(
+    *,
+    video_id: str,
+    config: PipelineConfig,
+    fallback_note: str,
+    log_message: str,
+    reload_summary_after_write: bool,
 ) -> ProcessResult:
     paths = initialize_workspace(resolve_artifact_paths(config.base_data_dir, video_id))
     metadata = VideoMetadata.model_validate(read_json(paths.metadata_path))
@@ -303,7 +299,7 @@ def prepare_summary_input(
         source_kind=summary.source_kind if summary else SourceKind.LOCAL_ASR,
         paths=paths,
         segments=segments,
-        notes=summary.notes if summary else ["Summary payload regenerated from existing segments."],
+        notes=summary.notes if summary else [fallback_note],
         transcription=summary.transcription if summary else None,
         subtitle_path=_resolve_artifact_path(paths, summary, "subtitle_source"),
         audio_source_path=_resolve_artifact_path(paths, summary, "audio_source"),
@@ -311,8 +307,8 @@ def prepare_summary_input(
         chunk_target_chars=config.chunk_target_chars,
     )
 
-    append_log(paths.pipeline_log_path, f"Prepared summary payload with {len(chunk_manifest)} chunks")
-    refreshed_summary = _load_summary_payload(paths.summary_payload_path)
+    append_log(paths.pipeline_log_path, f"{log_message} {len(chunk_manifest)} chunks")
+    refreshed_summary = _load_summary_payload(paths.summary_payload_path) if reload_summary_after_write else summary
     return ProcessResult(
         metadata=metadata,
         source_kind=refreshed_summary.source_kind if refreshed_summary else SourceKind.LOCAL_ASR,
