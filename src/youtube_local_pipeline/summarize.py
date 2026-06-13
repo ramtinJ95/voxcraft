@@ -45,12 +45,16 @@ def summarize_video(
 
     manifest = _load_summary_manifest(paths.summary_manifest_path)
     manifest = _migrate_legacy_final_summary(paths, manifest)
+    settings_match = _summary_settings_match(
+        manifest=manifest,
+        provider=summary_provider,
+        command=summary_command,
+        model=summary_model,
+        thinking_level=summary_thinking_level,
+    )
     if manifest is not None and not force and paths.summary_final_path.exists():
         if (
-            manifest.summary_provider == summary_provider
-            and manifest.summary_command == summary_command
-            and manifest.summary_model == summary_model
-            and manifest.summary_thinking_level == summary_thinking_level
+            settings_match
             and len(manifest.chunk_summaries) == len(chunk_manifest)
             and all((paths.root_dir / entry.output_path).exists() for entry in manifest.chunk_summaries)
         ):
@@ -79,7 +83,7 @@ def summarize_video(
         prompt = build_chunk_summary_prompt(metadata=metadata, chunk=chunk, chunk_text=chunk_text)
         write_text(prompt_path, prompt)
 
-        if force or not output_path.exists():
+        if force or not settings_match or not output_path.exists():
             rendered = run_summary_cli(
                 prompt=prompt,
                 output_path=output_path,
@@ -111,7 +115,7 @@ def summarize_video(
         chunk_manifest=chunk_manifest,
     )
     write_text(paths.summary_final_prompt_path, final_prompt)
-    if force or not paths.summary_final_path.exists():
+    if force or not settings_match or not paths.summary_final_path.exists():
         run_summary_cli(
             prompt=final_prompt,
             output_path=paths.summary_final_path,
@@ -373,6 +377,24 @@ def _load_summary_manifest(path: Path) -> SummaryManifest | None:
     if not path.exists():
         return None
     return SummaryManifest.model_validate(read_json(path))
+
+
+def _summary_settings_match(
+    *,
+    manifest: SummaryManifest | None,
+    provider: str,
+    command: str,
+    model: str | None,
+    thinking_level: str | None,
+) -> bool:
+    if manifest is None:
+        return False
+    return (
+        manifest.summary_provider == provider
+        and manifest.summary_command == command
+        and manifest.summary_model == model
+        and manifest.summary_thinking_level == thinking_level
+    )
 
 
 def _migrate_legacy_final_summary(
