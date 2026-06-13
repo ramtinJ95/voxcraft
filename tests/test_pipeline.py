@@ -311,6 +311,32 @@ def test_process_video_dry_run_applies_explicit_model_override(monkeypatch, tmp_
     assert result.transcription.model == "Qwen/Qwen3-ASR-0.6B"
 
 
+def test_process_video_dry_run_uses_high_quality_qwen_model(monkeypatch, tmp_path: Path) -> None:
+    metadata = VideoMetadata(
+        video_id="hq123",
+        url="https://www.youtube.com/watch?v=hq123",
+        title="High Quality Video",
+        subtitles={},
+        automatic_captions={},
+    )
+
+    def fake_probe_video(url: str) -> tuple[VideoMetadata, dict[str, object]]:
+        return metadata, {"id": metadata.video_id, "webpage_url": metadata.url}
+
+    monkeypatch.setattr("youtube_local_pipeline.pipeline.probe_video", fake_probe_video)
+
+    result = process_video(
+        url=metadata.url,
+        config=PipelineConfig(base_data_dir=tmp_path / "videos"),
+        language="en",
+        high_quality=True,
+        dry_run=True,
+    )
+
+    assert result.transcription is not None
+    assert result.transcription.model == "Qwen/Qwen3-ASR-1.7B"
+
+
 def test_process_video_dry_run_prefers_explicit_subtitle_language(monkeypatch, tmp_path: Path) -> None:
     metadata = VideoMetadata(
         video_id="lang123",
@@ -671,7 +697,7 @@ def test_process_video_dry_run_allows_whisper_cpp_override(monkeypatch, tmp_path
 
     assert result.transcription is not None
     assert result.transcription.backend == "whisper-cpp"
-    assert result.transcription.model == "large-v3"
+    assert result.transcription.model == "base"
 
 
 def test_transcription_details_match_rejects_cached_backend_mismatch() -> None:
