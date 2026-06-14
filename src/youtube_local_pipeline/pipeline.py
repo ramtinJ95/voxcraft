@@ -267,7 +267,6 @@ def rechunk_video(
         config=config,
         fallback_note="Chunk files regenerated from existing segments.",
         log_message="Rechunked transcript into",
-        reload_summary_after_write=False,
     )
 
 
@@ -280,7 +279,6 @@ def prepare_summary_input(
         config=config,
         fallback_note="Summary payload regenerated from existing segments.",
         log_message="Prepared summary payload with",
-        reload_summary_after_write=True,
     )
 
 
@@ -290,7 +288,6 @@ def _rebuild_summary_artifacts_from_segments(
     config: PipelineConfig,
     fallback_note: str,
     log_message: str,
-    reload_summary_after_write: bool,
 ) -> ProcessResult:
     paths = initialize_workspace(resolve_artifact_paths(config.base_data_dir, video_id))
     metadata = VideoMetadata.model_validate(read_json(paths.metadata_path))
@@ -310,7 +307,7 @@ def _rebuild_summary_artifacts_from_segments(
     )
 
     append_log(paths.pipeline_log_path, f"{log_message} {len(chunk_manifest)} chunks")
-    refreshed_summary = _load_summary_payload(paths.summary_payload_path) if reload_summary_after_write else summary
+    refreshed_summary = _load_summary_payload(paths.summary_payload_path)
     return ProcessResult(
         metadata=metadata,
         source_kind=refreshed_summary.source_kind if refreshed_summary else SourceKind.LOCAL_ASR,
