@@ -19,7 +19,7 @@ from youtube_local_pipeline.config import (
 from youtube_local_pipeline.download import _download_direct_subtitle, choose_subtitle_candidate, write_metadata_artifacts
 from youtube_local_pipeline.manifest import build_artifact_paths, initialize_workspace, resolve_video_root
 from youtube_local_pipeline.models import SourceKind, SubtitleCandidate, TranscriptSegment, TranscriptionDetails, VideoMetadata
-from youtube_local_pipeline.pipeline import _transcription_details_match, process_video
+from youtube_local_pipeline.pipeline import _transcription_details_match, process_video, rechunk_video
 from youtube_local_pipeline.qwen_cli import apply_mlx_qwen3_asr_patch
 from youtube_local_pipeline.subtitles import load_segments, write_transcript_artifacts
 from youtube_local_pipeline.summarize import _build_summary_command, summarize_video, wrap_markdown_text
@@ -276,6 +276,51 @@ def test_process_video_reuses_cached_subtitle_artifacts_without_probe(monkeypatc
     assert result.used_cache is True
     assert result.source_kind == SourceKind.MANUAL_SUBTITLES
     assert result.chunk_count == 1
+
+
+def test_rechunk_video_reports_refreshed_chunk_count(tmp_path: Path) -> None:
+    paths = initialize_workspace(build_artifact_paths(tmp_path / "video123", "video123"))
+    metadata = VideoMetadata(
+        video_id="video123",
+        url="https://www.youtube.com/watch?v=video123",
+        title="Chunk Count Test",
+    )
+    segments = [
+        TranscriptSegment(start_sec=0.0, end_sec=1.0, text="alpha"),
+        TranscriptSegment(start_sec=1.0, end_sec=2.0, text="beta"),
+        TranscriptSegment(start_sec=2.0, end_sec=3.0, text="gamma"),
+    ]
+    write_json(paths.metadata_path, metadata.model_dump(mode="json"))
+    write_json(paths.info_path, {"id": "video123"})
+    write_json(paths.segments_path, [segment.model_dump(mode="json") for segment in segments])
+    write_text(paths.clean_transcript_path, "alpha beta gamma\n")
+    write_text(paths.raw_transcript_path, "alpha beta gamma\n")
+    write_text(paths.transcript_srt_path, "1\n00:00:00,000 --> 00:00:03,000\nalpha beta gamma\n")
+    write_json(
+        paths.summary_payload_path,
+        {
+            "video_id": "video123",
+            "url": metadata.url,
+            "title": metadata.title,
+            "source_kind": "local-asr",
+            "transcript_path": "transcript/clean.txt",
+            "segments_path": "transcript/segments.json",
+            "chunk_index_path": "chunks/index.json",
+            "chunk_count": 1,
+            "segment_count": 3,
+            "artifacts": {},
+            "transcription": None,
+            "notes": [],
+        },
+    )
+
+    result = rechunk_video(
+        video_id="video123",
+        config=PipelineConfig(base_data_dir=tmp_path, chunk_target_chars=6),
+    )
+
+    assert result.chunk_count == 3
+    assert read_json(paths.summary_payload_path)["chunk_count"] == 3
 
 
 def test_resolve_qwen_command_args_falls_back_to_module_wrapper(monkeypatch) -> None:
