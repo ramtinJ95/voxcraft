@@ -199,6 +199,7 @@ def process_video(
             whisper_cpp_threads=config.whisper_cpp_threads,
             output_base=paths.asr_output_json_path.with_suffix(""),
             log_path=paths.pipeline_log_path,
+            reuse_qwen_output=not force,
         )
         transcription_details = _with_transcription_fingerprint(
             transcription_result.details,

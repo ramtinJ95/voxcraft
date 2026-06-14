@@ -713,6 +713,73 @@ def test_qwen_transcription_reuses_saved_payload_for_diarization_retry(monkeypat
     ]
 
 
+def test_qwen_transcription_can_force_rerun_with_saved_payload(monkeypatch, tmp_path: Path) -> None:
+    audio_path = tmp_path / "audio.wav"
+    audio_path.write_bytes(b"RIFF")
+    output_base = tmp_path / "asr-output"
+    write_json(
+        output_base.with_suffix(".json"),
+        {
+            "text": "Stale text",
+            "language": "en",
+            "segments": [{"start": 0.0, "end": 0.5, "text": "Stale"}],
+            "_yt_transcriber": {
+                "backend": "qwen3-asr",
+                "context": "",
+                "dtype": "float16",
+                "draft_model": None,
+                "forced_aligner": "Qwen/Qwen3-ForcedAligner-0.6B",
+                "input_path": str(audio_path.resolve()),
+                "language": "en",
+                "model": "mlx-community/Qwen3-ASR-1.7B-8bit",
+                "num_draft_tokens": 4,
+            },
+        },
+    )
+    subprocess_calls = 0
+
+    def fake_run(command, capture_output, text, check, env):
+        nonlocal subprocess_calls
+        subprocess_calls += 1
+        output_dir = Path(command[command.index("--output-dir") + 1])
+        output_dir.mkdir(parents=True, exist_ok=True)
+        write_json(
+            output_dir / "audio.json",
+            {
+                "text": "Fresh text",
+                "language": "en",
+                "segments": [{"start": 0.0, "end": 0.5, "text": "Fresh"}],
+            },
+        )
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    def fake_diarize(*, audio_path, payload, model_id, num_speakers, min_speakers, max_speakers):
+        return (
+            [{"speaker": "SPEAKER_00", "start": 0.0, "end": 0.5, "text": "Fresh"}],
+            [{"speaker": "SPEAKER_00", "start": 0.0, "end": 0.5, "text": "Fresh"}],
+        )
+
+    monkeypatch.setattr("youtube_local_pipeline.transcribe.shutil.which", lambda command: f"/usr/local/bin/{command}")
+    monkeypatch.setattr("youtube_local_pipeline.transcribe.subprocess.run", fake_run)
+    monkeypatch.setattr("youtube_local_pipeline.transcribe._diarize_qwen_payload_with_pyannote", fake_diarize)
+
+    result = transcribe_audio_file(
+        request=TranscriptionRequest(
+            input_path=audio_path,
+            backend="qwen3-asr",
+            model="mlx-community/Qwen3-ASR-1.7B-8bit",
+            language="en",
+        ),
+        qwen_diarize=True,
+        output_base=output_base,
+        reuse_qwen_output=False,
+    )
+
+    assert subprocess_calls == 1
+    assert result.text == "Fresh text"
+    assert read_json(output_base.with_suffix(".json"))["text"] == "Fresh text"
+
+
 def test_resolve_whisper_cpp_model_path_finds_named_model_in_local_models_dir(tmp_path: Path) -> None:
     model_dir = tmp_path / "models"
     model_dir.mkdir()
