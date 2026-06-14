@@ -1358,7 +1358,10 @@ def test_summarize_video_reruns_when_chunk_content_changes(monkeypatch, tmp_path
     ).hexdigest()
 
 
-def test_summarize_video_migrates_legacy_final_summary_without_rerunning_codex(tmp_path: Path) -> None:
+def test_summarize_video_migrates_legacy_final_summary_and_reruns_missing_hashes(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
     paths = initialize_workspace(build_artifact_paths(tmp_path / "video123", "video123"))
     metadata = VideoMetadata(
         video_id="video123",
@@ -1424,6 +1427,23 @@ def test_summarize_video_migrates_legacy_final_summary_without_rerunning_codex(t
             "final_summary_path": "summary/final.md",
         },
     )
+    captured_prompts: list[str] = []
+
+    def fake_run_summary_cli(
+        prompt: str,
+        output_path: Path,
+        workdir: Path,
+        provider: str,
+        command: str,
+        model: str | None = None,
+        thinking_level: str | None = None,
+    ) -> str:
+        captured_prompts.append(prompt)
+        content = "# Final Summary\n\nFresh summary.\n" if "Combine these chunk summaries" in prompt else "fresh chunk\n"
+        write_text(output_path, content)
+        return content
+
+    monkeypatch.setattr("youtube_local_pipeline.summarize.run_summary_cli", fake_run_summary_cli)
 
     result = summarize_video(
         video_id="video123",
@@ -1431,12 +1451,16 @@ def test_summarize_video_migrates_legacy_final_summary_without_rerunning_codex(t
     )
 
     assert result.final_summary_path == "final.md"
-    assert paths.summary_final_path.read_text(encoding="utf-8") == "# Final Summary\n\nLegacy summary.\n"
+    assert len(captured_prompts) == 2
+    assert paths.summary_final_path.read_text(encoding="utf-8") == "# Final Summary\n\nFresh summary.\n"
     assert not (paths.summary_dir / "final.md").exists()
     manifest = read_json(paths.summary_manifest_path)
     assert manifest["final_summary_path"] == "final.md"
     assert manifest["summary_provider"] == "codex"
     assert manifest["summary_command"] == "codex"
+    assert manifest["chunk_summaries"][0]["source_chunk_sha256"] == hashlib.sha256(
+        b"alpha beta gamma"
+    ).hexdigest()
 
 
 def test_wrap_markdown_text_wraps_paragraphs_and_bullets_to_80_columns() -> None:
