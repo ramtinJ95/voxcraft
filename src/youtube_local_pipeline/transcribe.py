@@ -79,6 +79,7 @@ def transcribe_audio_file(
     whisper_cpp_threads: int = 4,
     output_base: Path | None = None,
     log_path: Path | None = None,
+    reuse_qwen_output: bool = True,
 ) -> TranscriptionResult:
     if request.backend == "qwen3-asr":
         return _transcribe_with_qwen3_asr(
@@ -96,6 +97,7 @@ def transcribe_audio_file(
             num_draft_tokens=qwen_num_draft_tokens,
             output_base=output_base,
             log_path=log_path,
+            reuse_output=reuse_qwen_output,
         )
 
     if request.backend == "whisper-cpp":
@@ -127,6 +129,7 @@ def _transcribe_with_qwen3_asr(
     num_draft_tokens: int,
     output_base: Path | None = None,
     log_path: Path | None = None,
+    reuse_output: bool = True,
 ) -> TranscriptionResult:
     command_prefix = resolve_qwen_command_args(command)
 
@@ -141,7 +144,7 @@ def _transcribe_with_qwen3_asr(
         dtype=dtype,
         draft_model=draft_model,
         num_draft_tokens=num_draft_tokens,
-    ) if diarize else None
+    ) if diarize and reuse_output else None
 
     if payload is None:
         _append_optional_log(log_path, f"Starting qwen3-asr subprocess with {request.model}")
