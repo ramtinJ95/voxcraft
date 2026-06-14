@@ -432,7 +432,7 @@ def _chunk_summary_matches_input(
 ) -> bool:
     if entry.index != chunk.index or entry.source_chunk_path != chunk.path:
         return False
-    if entry.source_chunk_sha256 is not None and entry.source_chunk_sha256 != chunk_sha256:
+    if entry.source_chunk_sha256 != chunk_sha256:
         return False
     return (root_dir / entry.output_path).exists()
 
