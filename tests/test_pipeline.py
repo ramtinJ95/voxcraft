@@ -256,7 +256,7 @@ def test_process_video_reuses_cached_subtitle_artifacts_without_probe(monkeypatc
             "chunk_index_path": "chunks/index.json",
             "chunk_count": 1,
             "segment_count": 1,
-            "artifacts": {},
+            "artifacts": {"subtitle_language": "en"},
             "transcription": None,
             "notes": ["Creator-provided subtitles are available in en; ASR can be skipped."],
         },
@@ -276,6 +276,99 @@ def test_process_video_reuses_cached_subtitle_artifacts_without_probe(monkeypatc
     assert result.used_cache is True
     assert result.source_kind == SourceKind.MANUAL_SUBTITLES
     assert result.chunk_count == 1
+
+
+def test_process_video_reruns_cached_subtitles_for_explicit_language(monkeypatch, tmp_path: Path) -> None:
+    base_dir = tmp_path / "videos"
+    paths = initialize_workspace(build_artifact_paths(base_dir / "test-video--abc123", "abc123"))
+    write_json(
+        paths.metadata_path,
+        {
+            "video_id": "abc123",
+            "url": "https://www.youtube.com/watch?v=abc123",
+            "title": "Test Video",
+            "subtitle_languages": ["en", "es"],
+            "automatic_caption_languages": [],
+        },
+    )
+    write_json(paths.info_path, {"id": "abc123"})
+    write_text(paths.clean_transcript_path, "Hello world\n")
+    write_json(
+        paths.segments_path,
+        [TranscriptSegment(start_sec=0.0, end_sec=1.0, text="Hello world").model_dump(mode="json")],
+    )
+    write_json(
+        paths.chunk_index_path,
+        [
+            {
+                "index": 1,
+                "start_sec": 0.0,
+                "end_sec": 1.0,
+                "path": "chunks/chunk-001.txt",
+                "char_count": 11,
+            }
+        ],
+    )
+    write_json(
+        paths.summary_payload_path,
+        {
+            "video_id": "abc123",
+            "url": "https://www.youtube.com/watch?v=abc123",
+            "title": "Test Video",
+            "source_kind": "subtitles",
+            "transcript_path": "transcript/clean.txt",
+            "segments_path": "transcript/segments.json",
+            "chunk_index_path": "chunks/index.json",
+            "chunk_count": 1,
+            "segment_count": 1,
+            "artifacts": {"subtitle_language": "en"},
+            "transcription": None,
+            "notes": ["Creator-provided subtitles are available in en; ASR can be skipped."],
+        },
+    )
+    metadata = VideoMetadata(
+        video_id="abc123",
+        url="https://www.youtube.com/watch?v=abc123",
+        title="Test Video",
+        subtitles={
+            "en": [SubtitleCandidate(language="en", ext="vtt", url="https://example.com/en.vtt")],
+            "es": [SubtitleCandidate(language="es", ext="vtt", url="https://example.com/es.vtt")],
+        },
+        automatic_captions={},
+    )
+    downloaded_languages: list[str] = []
+
+    def fake_probe_video(url: str) -> tuple[VideoMetadata, dict[str, object]]:
+        return metadata, {"id": metadata.video_id, "webpage_url": metadata.url}
+
+    def fake_download_subtitle_file(
+        url: str,
+        source_dir: Path,
+        candidate: SubtitleCandidate,
+        force: bool = False,
+    ) -> Path:
+        downloaded_languages.append(candidate.language)
+        subtitle_path = source_dir / f"subtitles.{candidate.language}.vtt"
+        write_text(
+            subtitle_path,
+            "WEBVTT\n\n00:00:00.000 --> 00:00:01.000\nHola mundo\n",
+        )
+        return subtitle_path
+
+    monkeypatch.setattr("youtube_local_pipeline.pipeline.probe_video", fake_probe_video)
+    monkeypatch.setattr("youtube_local_pipeline.pipeline.download_subtitle_file", fake_download_subtitle_file)
+
+    result = process_video(
+        url="https://www.youtube.com/watch?v=abc123",
+        config=PipelineConfig(base_data_dir=base_dir),
+        language="es",
+    )
+
+    assert result.used_cache is False
+    assert result.source_kind == SourceKind.MANUAL_SUBTITLES
+    assert downloaded_languages == ["es"]
+    assert paths.clean_transcript_path.read_text(encoding="utf-8") == "Hola mundo\n"
+    assert read_json(paths.summary_payload_path)["artifacts"]["subtitle_language"] == "es"
 
 
 def test_rechunk_video_reports_refreshed_chunk_count(tmp_path: Path) -> None:

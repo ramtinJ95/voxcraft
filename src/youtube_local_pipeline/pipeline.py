@@ -70,6 +70,7 @@ def process_video(
         prefer_english=language is None,
     )
     source_kind = _planned_source_kind(candidate)
+    requested_subtitle_language = candidate.language if candidate is not None else None
     transcription_details = _planned_transcription_details(
         config=config,
         language=language,
@@ -122,6 +123,7 @@ def process_video(
         config=config,
         force=force,
         requested_source_kind=source_kind,
+        requested_subtitle_language=requested_subtitle_language,
         requested_transcription=transcription_details,
     ):
         append_log(paths.pipeline_log_path, "Reusing cached final artifacts")
@@ -129,6 +131,7 @@ def process_video(
 
     notes: list[str] = []
     subtitle_path: Path | None = None
+    subtitle_language: str | None = None
     audio_source_path: Path | None = None
     normalized_audio_path: Path | None = None
 
@@ -143,6 +146,7 @@ def process_video(
         segments = parse_subtitle_file(subtitle_path)
         if segments:
             source_kind = SourceKind.MANUAL_SUBTITLES
+            subtitle_language = candidate.language
             write_transcript_artifacts(paths, segments)
             notes.append(_planned_note(candidate, metadata))
             append_log(paths.pipeline_log_path, f"Subtitle branch succeeded with {subtitle_path.name}")
@@ -240,6 +244,7 @@ def process_video(
         notes=notes,
         transcription=transcription_details,
         subtitle_path=subtitle_path,
+        subtitle_language=subtitle_language,
         audio_source_path=audio_source_path,
         normalized_audio_path=normalized_audio_path,
         chunk_target_chars=config.chunk_target_chars,
@@ -302,6 +307,7 @@ def _rebuild_summary_artifacts_from_segments(
         notes=summary.notes if summary else [fallback_note],
         transcription=summary.transcription if summary else None,
         subtitle_path=_resolve_artifact_path(paths, summary, "subtitle_source"),
+        subtitle_language=_summary_subtitle_language(summary),
         audio_source_path=_resolve_artifact_path(paths, summary, "audio_source"),
         normalized_audio_path=_resolve_artifact_path(paths, summary, "audio_normalized"),
         chunk_target_chars=config.chunk_target_chars,
@@ -352,7 +358,7 @@ def _try_load_cached_process_result(
     if not isinstance(metadata_payload, dict):
         return None
 
-    requested_source_kind = _cached_requested_source_kind(
+    requested_source_kind, requested_subtitle_language = _cached_requested_source_plan(
         metadata_payload=metadata_payload,
         config=config,
         language=language,
@@ -377,6 +383,7 @@ def _try_load_cached_process_result(
         config=config,
         force=force,
         requested_source_kind=requested_source_kind,
+        requested_subtitle_language=requested_subtitle_language,
         requested_transcription=requested_transcription,
     ):
         return None
@@ -386,25 +393,25 @@ def _try_load_cached_process_result(
     return _load_cached_result(metadata, paths)
 
 
-def _cached_requested_source_kind(
+def _cached_requested_source_plan(
     *,
     metadata_payload: dict[str, object],
     config: PipelineConfig,
     language: str | None,
-) -> SourceKind | None:
+) -> tuple[SourceKind | None, str | None]:
     if not config.subtitle_first:
-        return SourceKind.LOCAL_ASR
+        return SourceKind.LOCAL_ASR, None
 
     subtitle_languages = _cached_subtitle_languages(metadata_payload)
     if not subtitle_languages:
-        return SourceKind.LOCAL_ASR
+        return SourceKind.LOCAL_ASR, None
 
     preferred_language = (language or config.language_preference).lower()
     language_order = ("en", preferred_language) if language is None else (preferred_language, "en")
     for candidate_language in language_order:
         if candidate_language and candidate_language in subtitle_languages:
-            return SourceKind.MANUAL_SUBTITLES
-    return SourceKind.LOCAL_ASR
+            return SourceKind.MANUAL_SUBTITLES, candidate_language
+    return SourceKind.LOCAL_ASR, None
 
 
 def _cached_subtitle_languages(metadata_payload: dict[str, object]) -> set[str]:
@@ -424,6 +431,7 @@ def _can_reuse_cached_artifacts(
     config: PipelineConfig,
     force: bool,
     requested_source_kind: SourceKind,
+    requested_subtitle_language: str | None,
     requested_transcription: TranscriptionDetails | None,
 ) -> bool:
     if not (
@@ -443,9 +451,34 @@ def _can_reuse_cached_artifacts(
         return False
 
     if requested_source_kind != SourceKind.LOCAL_ASR:
-        return True
+        return _subtitle_language_matches(summary, requested_subtitle_language)
 
     return _transcription_details_match(summary.transcription, requested_transcription)
+
+
+def _subtitle_language_matches(summary: SummaryPayload, requested_language: str | None) -> bool:
+    if requested_language is None:
+        return False
+    cached_language = _summary_subtitle_language(summary)
+    return cached_language is not None and cached_language.lower() == requested_language.lower()
+
+
+def _summary_subtitle_language(summary: SummaryPayload | None) -> str | None:
+    if summary is None:
+        return None
+
+    artifact_language = summary.artifacts.get("subtitle_language")
+    if artifact_language:
+        return artifact_language.lower()
+
+    subtitle_source = summary.artifacts.get("subtitle_source")
+    if not subtitle_source:
+        return None
+    source_name = Path(subtitle_source).name
+    source_parts = source_name.split(".")
+    if len(source_parts) >= 3 and source_parts[0] == "subtitles":
+        return source_parts[1].lower()
+    return None
 
 
 def _load_cached_result(metadata: VideoMetadata, paths) -> ProcessResult:
@@ -505,6 +538,7 @@ def _write_summary_artifacts(
     notes: list[str],
     transcription: TranscriptionDetails | None,
     subtitle_path: Path | None,
+    subtitle_language: str | None,
     audio_source_path: Path | None,
     normalized_audio_path: Path | None,
     chunk_target_chars: int,
@@ -530,6 +564,8 @@ def _write_summary_artifacts(
     }
     if subtitle_path is not None:
         artifact_map["subtitle_source"] = path_string(subtitle_path, paths.root_dir)
+    if subtitle_language is not None:
+        artifact_map["subtitle_language"] = subtitle_language
     if audio_source_path is not None:
         artifact_map["audio_source"] = path_string(audio_source_path, paths.root_dir)
     if normalized_audio_path is not None:
