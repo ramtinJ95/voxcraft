@@ -9,10 +9,12 @@ description = "Local YouTube transcript preparation pipeline for Apple Silicon M
 readme = "README.md"
 requires-python = ">=3.11,<3.13"
 dependencies = [
+  "fastapi>=0.115",
   "mlx-qwen3-asr[diarize]>=0.3.2",
   "pydantic>=2",
   "rich>=13",
   "typer>=0.12",
+  "uvicorn[standard]>=0.30",
   "webvtt-py",
   "yt-dlp",
 ]

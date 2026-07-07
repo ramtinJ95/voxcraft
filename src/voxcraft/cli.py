@@ -398,5 +398,40 @@ def summarize(
     console.print(f"Summarized {result.metadata.video_id} into {result.final_summary_path}.")
 
 
+@app.command()
+def server(
+    ctx: typer.Context,
+    host: str = typer.Option("127.0.0.1", help="Host/interface to bind. Use a LAN or Tailscale IP for remote access."),
+    port: int = typer.Option(8765, min=1, max=65535, help="Port to listen on."),
+    token: str | None = typer.Option(
+        None,
+        envvar="VOXCRAFT_SERVER_TOKEN",
+        help="API token. Defaults to $VOXCRAFT_SERVER_TOKEN.",
+    ),
+    jobs_db: Path | None = typer.Option(None, help="SQLite job database path."),
+    data_dir: Path | None = typer.Option(None, help="Override the artifact root directory for server jobs."),
+) -> None:
+    """Run the authenticated async job server."""
+    if not token:
+        raise typer.BadParameter("Set --token or VOXCRAFT_SERVER_TOKEN before starting the server.")
+    overrides = {"base_data_dir": data_dir} if data_dir is not None else None
+    config, resolved_config_path = _load_runtime_config(ctx, overrides=overrides)
+
+    try:
+        import uvicorn
+    except ImportError as exc:
+        raise typer.BadParameter("The server dependencies are missing. Run `uv sync` first.") from exc
+
+    from .server import create_app, default_jobs_db_path
+
+    resolved_jobs_db = jobs_db or default_jobs_db_path(config)
+    console.print(f"Starting voxcraft server on {host}:{port}")
+    console.print(f"Config: {resolved_config_path or 'built-in defaults'}")
+    console.print(f"Data root: {config.base_data_dir}")
+    console.print(f"Jobs DB: {resolved_jobs_db}")
+    app_instance = create_app(config=config, jobs_db_path=resolved_jobs_db, token=token)
+    uvicorn.run(app_instance, host=host, port=port)
+
+
 def main() -> None:
     app()
