@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "yt-transcriber-cli"
+name = "voxcraft"
 version = "0.1.0"
 description = "Local YouTube transcript preparation pipeline for Apple Silicon Macs."
 readme = "README.md"
@@ -18,8 +18,8 @@ dependencies = [
 ]
 
 [project.scripts]
-yt-transcriber = "youtube_local_pipeline.cli:app"
-yt-transcriber-qwen = "youtube_local_pipeline.qwen_cli:main"
+voxcraft = "voxcraft.cli:app"
+voxcraft-qwen = "voxcraft.qwen_cli:main"
 
 [dependency-groups]
 dev = [
@@ -27,7 +27,7 @@ dev = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/youtube_local_pipeline"]
+packages = ["src/voxcraft"]
 
 [tool.hatch.build.targets.sdist]
 include = [

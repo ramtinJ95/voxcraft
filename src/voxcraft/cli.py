@@ -86,8 +86,8 @@ def doctor(ctx: typer.Context) -> None:
     command_rows = [
         ("ffmpeg", shutil.which("ffmpeg"), "required for audio normalization and local ASR", True),
         (
-            "yt-transcriber-qwen",
-            resolved_qwen_command or f"{Path(sys.executable).resolve()} -m youtube_local_pipeline.qwen_cli",
+            "voxcraft-qwen",
+            resolved_qwen_command or f"{Path(sys.executable).resolve()} -m voxcraft.qwen_cli",
             "default Qwen entrypoint",
             config.default_asr_backend == "qwen3-asr",
         ),

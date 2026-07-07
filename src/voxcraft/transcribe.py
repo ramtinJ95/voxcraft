@@ -19,8 +19,8 @@ from .utils import append_log
 
 MODEL_FILE_EXTENSIONS = (".bin", ".gguf")
 DEFAULT_SPEAKER_LABEL = "SPEAKER_00"
-QWEN_WRAPPER_COMMAND = "yt-transcriber-qwen"
-QWEN_WRAPPER_MODULE = "youtube_local_pipeline.qwen_cli"
+QWEN_WRAPPER_COMMAND = "voxcraft-qwen"
+QWEN_WRAPPER_MODULE = "voxcraft.qwen_cli"
 
 
 class TranscriptionRequest(BaseModel):
@@ -259,7 +259,7 @@ def _load_reusable_qwen_payload(
     payload = json.loads(output_json_path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
         return None
-    marker = payload.get("_yt_transcriber")
+    marker = payload.get("_voxcraft")
     if not isinstance(marker, dict):
         return None
     expected_marker = _qwen_payload_marker(
@@ -285,7 +285,7 @@ def _mark_qwen_payload(
     draft_model: str | None,
     num_draft_tokens: int,
 ) -> None:
-    payload["_yt_transcriber"] = _qwen_payload_marker(
+    payload["_voxcraft"] = _qwen_payload_marker(
         request=request,
         context=context,
         forced_aligner=forced_aligner,

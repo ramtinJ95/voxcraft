@@ -1,6 +1,6 @@
 # Architecture
 
-This document explains how `yt-transcriber-cli` works internally and how the runtime pieces fit together.
+This document explains how `voxcraft` works internally and how the runtime pieces fit together.
 
 ## Design Goals
 
@@ -15,7 +15,7 @@ The project is opinionated in a few specific ways:
 
 ## Pipeline Overview
 
-The main entrypoint is `yt-transcriber process "<youtube-url>"`.
+The main entrypoint is `voxcraft process "<youtube-url>"`.
 
 The end-to-end control flow is:
 
@@ -46,7 +46,7 @@ YouTube URL
         -> ffmpeg normalize to source/audio.wav
         -> build transcription request
         -> qwen3-asr default path
-           -> yt-transcriber-qwen wrapper
+           -> voxcraft-qwen wrapper
            -> mlx-qwen3-asr
            -> forced aligner
            -> optional pyannote diarization
@@ -62,7 +62,7 @@ YouTube URL
 
 ### CLI
 
-[src/youtube_local_pipeline/cli.py](../src/youtube_local_pipeline/cli.py)
+[src/voxcraft/cli.py](../src/voxcraft/cli.py)
 
 Defines the public commands:
 - `doctor`
@@ -80,7 +80,7 @@ It also validates flag combinations such as:
 
 ### Config
 
-[src/youtube_local_pipeline/config.py](../src/youtube_local_pipeline/config.py)
+[src/voxcraft/config.py](../src/voxcraft/config.py)
 
 Holds the runtime defaults:
 - default ASR backend
@@ -91,8 +91,8 @@ Holds the runtime defaults:
 
 Runtime config is loaded in this order:
 - `--config /path/to/config.json`
-- `YT_TRANSCRIBER_CONFIG`
-- `~/.config/yt-transcriber/config.json`
+- `VOXCRAFT_CONFIG`
+- `~/.config/voxcraft/config.json`
 - built-in defaults only when no file is present
 
 The current effective defaults are:
@@ -123,7 +123,7 @@ act only as per-run overrides on top of the loaded config.
 
 ### Download And Probe
 
-[src/youtube_local_pipeline/download.py](../src/youtube_local_pipeline/download.py)
+[src/voxcraft/download.py](../src/voxcraft/download.py)
 
 Uses the Python `yt_dlp` library directly.
 
@@ -141,7 +141,7 @@ Important behavior:
 
 ### Audio Normalization
 
-[src/youtube_local_pipeline/audio.py](../src/youtube_local_pipeline/audio.py)
+[src/voxcraft/audio.py](../src/voxcraft/audio.py)
 
 Normalizes downloaded audio with `ffmpeg` to:
 - mono
@@ -152,7 +152,7 @@ This normalized file becomes `source/audio.wav`, which is the ASR input for the 
 
 ### Transcription
 
-[src/youtube_local_pipeline/transcribe.py](../src/youtube_local_pipeline/transcribe.py)
+[src/voxcraft/transcribe.py](../src/voxcraft/transcribe.py)
 
 This module does three jobs:
 - plan the transcription request
@@ -167,14 +167,14 @@ Default backend: `qwen3-asr`
 
 Flow:
 - resolve the Qwen command
-- call `yt-transcriber-qwen`
+- call `voxcraft-qwen`
 - request JSON output with timestamps
 - optionally run pyannote diarization in repo code
 - convert backend segments into `TranscriptSegment` objects
 
 The Qwen command is not `mlx-qwen3-asr` directly. It is the repo wrapper in:
 
-[src/youtube_local_pipeline/qwen_cli.py](../src/youtube_local_pipeline/qwen_cli.py)
+[src/voxcraft/qwen_cli.py](../src/voxcraft/qwen_cli.py)
 
 That wrapper patches the upstream model loader at runtime so the hybrid `mlx-community/Qwen3-ASR-1.7B-8bit` checkpoint loads correctly.
 
@@ -196,7 +196,7 @@ This path does not support diarization in the current CLI.
 
 ### Diarization
 
-Still owned by [src/youtube_local_pipeline/transcribe.py](../src/youtube_local_pipeline/transcribe.py).
+Still owned by [src/voxcraft/transcribe.py](../src/voxcraft/transcribe.py).
 
 The repo intentionally does not rely on the upstream `mlx-qwen3-asr --diarize` behavior. Instead:
 - Qwen ASR runs first
@@ -218,7 +218,7 @@ Required environment variables for gated access:
 
 ### Transcript Shaping
 
-[src/youtube_local_pipeline/subtitles.py](../src/youtube_local_pipeline/subtitles.py) and [src/youtube_local_pipeline/clean.py](../src/youtube_local_pipeline/clean.py)
+[src/voxcraft/subtitles.py](../src/voxcraft/subtitles.py) and [src/voxcraft/clean.py](../src/voxcraft/clean.py)
 
 These modules:
 - parse VTT or SRT
@@ -233,7 +233,7 @@ These modules:
 
 ### Chunking
 
-[src/youtube_local_pipeline/chunk.py](../src/youtube_local_pipeline/chunk.py)
+[src/voxcraft/chunk.py](../src/voxcraft/chunk.py)
 
 Chunks are built from already-cleaned transcript segments.
 
@@ -248,7 +248,7 @@ Outputs:
 
 ### Artifact Management
 
-[src/youtube_local_pipeline/manifest.py](../src/youtube_local_pipeline/manifest.py)
+[src/voxcraft/manifest.py](../src/voxcraft/manifest.py)
 
 Creates the workspace layout and summary handoff payload.
 
@@ -268,7 +268,7 @@ creating new ones.
 
 ### Summarization
 
-[src/youtube_local_pipeline/summarize.py](../src/youtube_local_pipeline/summarize.py)
+[src/voxcraft/summarize.py](../src/voxcraft/summarize.py)
 
 This is the only non-local part of the pipeline.
 
@@ -385,5 +385,5 @@ For a new user to reproduce the workflow successfully, they need:
 The most important user-facing command to verify after setup is:
 
 ```bash
-yt-transcriber doctor
+voxcraft doctor
 ```

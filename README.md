@@ -1,4 +1,4 @@
-# yt-transcriber-cli
+# voxcraft
 
 Local YouTube transcript-prep pipeline for Apple Silicon Macs.
 
@@ -27,7 +27,7 @@ The current default stack is:
 - Default Codex summary model: `gpt-5.5`
 - Default Codex thinking level: `high`
 
-The default Qwen path is invoked through the repo-owned `yt-transcriber-qwen` wrapper. That wrapper patches the upstream loader so the hybrid `mlx-community/Qwen3-ASR-1.7B-8bit` checkpoint works in a fresh environment without hand-editing the venv.
+The default Qwen path is invoked through the repo-owned `voxcraft-qwen` wrapper. That wrapper patches the upstream loader so the hybrid `mlx-community/Qwen3-ASR-1.7B-8bit` checkpoint works in a fresh environment without hand-editing the venv.
 
 ## Known Limitations
 
@@ -78,7 +78,7 @@ Create the environment and install the project:
 ```bash
 uv sync --group dev --python 3.11
 source .venv/bin/activate
-yt-transcriber doctor
+voxcraft doctor
 ```
 
 ## Auth And Gating
@@ -105,7 +105,7 @@ There are two important gated integrations:
 2. Summary CLI authentication
    The transcript pipeline is local. Summarization is not.
 
-   `yt-transcriber summarize ...` and `yt-transcriber process ... --summarize` require:
+   `voxcraft summarize ...` and `voxcraft process ... --summarize` require:
    - one supported summary CLI on `PATH`: `codex`, `claude`, `gemini`, or `pi`
    - an authenticated session for that CLI
 
@@ -113,7 +113,7 @@ There are two important gated integrations:
 
 Supported runtime environment variables:
 
-- `YT_TRANSCRIBER_CONFIG`
+- `VOXCRAFT_CONFIG`
   Override the runtime `config.json` path
 - `PYANNOTE_AUTH_TOKEN`
   Hugging Face token for gated pyannote diarization models
@@ -133,9 +133,9 @@ The CLI does not load a `.env` file by itself. These variables must already be p
 The CLI now treats a JSON config as the primary source of runtime defaults.
 
 Lookup order:
-- `yt-transcriber --config /path/to/config.json ...`
-- `$YT_TRANSCRIBER_CONFIG`
-- `~/.config/yt-transcriber/config.json`
+- `voxcraft --config /path/to/config.json ...`
+- `$VOXCRAFT_CONFIG`
+- `~/.config/voxcraft/config.json`
 
 CLI flags still work, but they are now per-run overrides on top of the loaded config.
 
@@ -177,31 +177,31 @@ An example file is included at [config.example.json](config.example.json).
 Probe a video without downloading media:
 
 ```bash
-yt-transcriber process "https://www.youtube.com/watch?v=..." --dry-run
+voxcraft process "https://www.youtube.com/watch?v=..." --dry-run
 ```
 
 Run the normal local pipeline:
 
 ```bash
-yt-transcriber process "https://www.youtube.com/watch?v=..."
+voxcraft process "https://www.youtube.com/watch?v=..."
 ```
 
 Run the pipeline and summarize:
 
 ```bash
-yt-transcriber process "https://www.youtube.com/watch?v=..." --summarize
+voxcraft process "https://www.youtube.com/watch?v=..." --summarize
 ```
 
 Use a specific config file for the whole run:
 
 ```bash
-yt-transcriber --config ./config.json process "https://www.youtube.com/watch?v=..." --summarize
+voxcraft --config ./config.json process "https://www.youtube.com/watch?v=..." --summarize
 ```
 
 Temporarily override the configured summary CLI:
 
 ```bash
-yt-transcriber process "https://www.youtube.com/watch?v=..." \
+voxcraft process "https://www.youtube.com/watch?v=..." \
   --summarize \
   --summary-provider claude
 ```
@@ -209,13 +209,13 @@ yt-transcriber process "https://www.youtube.com/watch?v=..." \
 Enable diarization for multi-speaker audio:
 
 ```bash
-yt-transcriber process "https://www.youtube.com/watch?v=..." --diarize --num-speakers 2
+voxcraft process "https://www.youtube.com/watch?v=..." --diarize --num-speakers 2
 ```
 
 Use the safe fallback backend:
 
 ```bash
-yt-transcriber process "https://www.youtube.com/watch?v=..." \
+voxcraft process "https://www.youtube.com/watch?v=..." \
   --asr-backend whisper-cpp \
   --whisper-cpp-model ./models/ggml-large-v3.bin
 ```
@@ -223,19 +223,19 @@ yt-transcriber process "https://www.youtube.com/watch?v=..." \
 Summarize an already-processed video:
 
 ```bash
-yt-transcriber summarize <youtube_id>
+voxcraft summarize <youtube_id>
 ```
 
 Summarize with a specific config file:
 
 ```bash
-yt-transcriber --config ./config.json summarize <youtube_id>
+voxcraft --config ./config.json summarize <youtube_id>
 ```
 
 Override the configured Pi model for one run:
 
 ```bash
-yt-transcriber summarize <youtube_id> \
+voxcraft summarize <youtube_id> \
   --provider pi \
   --model openai/gpt-5.5 \
   --thinking-level high
@@ -246,21 +246,21 @@ yt-transcriber summarize <youtube_id> \
 Available commands:
 
 ```bash
-yt-transcriber doctor
-yt-transcriber --config ./config.json doctor
-yt-transcriber process "<youtube-url>" --dry-run
-yt-transcriber process "<youtube-url>"
-yt-transcriber process "<youtube-url>" --summarize
-yt-transcriber --config ./config.json process "<youtube-url>" --summarize
-yt-transcriber process "<youtube-url>" --summarize --summary-provider claude
-yt-transcriber process "<youtube-url>" --summarize --summary-provider pi --summary-model openai/gpt-5.5 --summary-thinking-level high
-yt-transcriber process "<youtube-url>" --diarize
-yt-transcriber summarize <youtube_id>
-yt-transcriber --config ./config.json summarize <youtube_id>
-yt-transcriber summarize <youtube_id> --provider gemini
-yt-transcriber summarize <youtube_id> --provider pi --model openai/gpt-5.5 --thinking-level high
-yt-transcriber rechunk <youtube_id>
-yt-transcriber prepare-summary <youtube_id>
+voxcraft doctor
+voxcraft --config ./config.json doctor
+voxcraft process "<youtube-url>" --dry-run
+voxcraft process "<youtube-url>"
+voxcraft process "<youtube-url>" --summarize
+voxcraft --config ./config.json process "<youtube-url>" --summarize
+voxcraft process "<youtube-url>" --summarize --summary-provider claude
+voxcraft process "<youtube-url>" --summarize --summary-provider pi --summary-model openai/gpt-5.5 --summary-thinking-level high
+voxcraft process "<youtube-url>" --diarize
+voxcraft summarize <youtube_id>
+voxcraft --config ./config.json summarize <youtube_id>
+voxcraft summarize <youtube_id> --provider gemini
+voxcraft summarize <youtube_id> --provider pi --model openai/gpt-5.5 --thinking-level high
+voxcraft rechunk <youtube_id>
+voxcraft prepare-summary <youtube_id>
 ```
 
 Command behavior:
@@ -407,26 +407,26 @@ Use `--force` to recompute.
 - Long Qwen runs currently use `--quiet --no-progress`, so they can look idle even when they are still computing.
 - `whisper.cpp` is the safer fallback path if the Qwen stack is unavailable or unstable on a given machine.
 - Summary provider, command, model, and thinking level can all be set in `config.json`; CLI flags override only the selected provider for the current run.
-- The loaded runtime config comes from `--config`, then `$YT_TRANSCRIBER_CONFIG`, then `~/.config/yt-transcriber/config.json`.
+- The loaded runtime config comes from `--config`, then `$VOXCRAFT_CONFIG`, then `~/.config/voxcraft/config.json`.
 - `--summary-thinking-level` and `--thinking-level` are currently applied to providers that expose a comparable headless flag: `codex` and `pi`.
 - The `python3.11` and `yt-dlp` shell commands are convenient but not strictly required after the environment is built, because the runtime uses the active interpreter and the installed `yt_dlp` Python package.
 
 ## Code Map
 
 Main modules:
-- [src/youtube_local_pipeline/cli.py](src/youtube_local_pipeline/cli.py)
-- [src/youtube_local_pipeline/config.py](src/youtube_local_pipeline/config.py)
-- [src/youtube_local_pipeline/pipeline.py](src/youtube_local_pipeline/pipeline.py)
-- [src/youtube_local_pipeline/download.py](src/youtube_local_pipeline/download.py)
-- [src/youtube_local_pipeline/audio.py](src/youtube_local_pipeline/audio.py)
-- [src/youtube_local_pipeline/transcribe.py](src/youtube_local_pipeline/transcribe.py)
-- [src/youtube_local_pipeline/qwen_cli.py](src/youtube_local_pipeline/qwen_cli.py)
-- [src/youtube_local_pipeline/subtitles.py](src/youtube_local_pipeline/subtitles.py)
-- [src/youtube_local_pipeline/clean.py](src/youtube_local_pipeline/clean.py)
-- [src/youtube_local_pipeline/chunk.py](src/youtube_local_pipeline/chunk.py)
-- [src/youtube_local_pipeline/summarize.py](src/youtube_local_pipeline/summarize.py)
-- [src/youtube_local_pipeline/manifest.py](src/youtube_local_pipeline/manifest.py)
-- [src/youtube_local_pipeline/models.py](src/youtube_local_pipeline/models.py)
+- [src/voxcraft/cli.py](src/voxcraft/cli.py)
+- [src/voxcraft/config.py](src/voxcraft/config.py)
+- [src/voxcraft/pipeline.py](src/voxcraft/pipeline.py)
+- [src/voxcraft/download.py](src/voxcraft/download.py)
+- [src/voxcraft/audio.py](src/voxcraft/audio.py)
+- [src/voxcraft/transcribe.py](src/voxcraft/transcribe.py)
+- [src/voxcraft/qwen_cli.py](src/voxcraft/qwen_cli.py)
+- [src/voxcraft/subtitles.py](src/voxcraft/subtitles.py)
+- [src/voxcraft/clean.py](src/voxcraft/clean.py)
+- [src/voxcraft/chunk.py](src/voxcraft/chunk.py)
+- [src/voxcraft/summarize.py](src/voxcraft/summarize.py)
+- [src/voxcraft/manifest.py](src/voxcraft/manifest.py)
+- [src/voxcraft/models.py](src/voxcraft/models.py)
 
 ## Tests
 

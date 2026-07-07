@@ -2163,7 +2163,7 @@ wheels = [
 ]
 
 [[package]]
-name = "yt-transcriber-cli"
+name = "voxcraft"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [

@@ -1,24 +1,24 @@
 ---
-name: yt-transcriber-cli
-description: Operate the local `yt-transcriber` CLI for YouTube transcript preparation, diarization, chunking, and Codex summarization. Use when Codex needs to run or diagnose this repo's pipeline, process a YouTube URL end to end, inspect transcript artifacts, rerun summaries, choose between `qwen3-asr` and `whisper.cpp`, or explain where outputs are stored and how the workflow behaves.
+name: voxcraft
+description: Operate the local `voxcraft` CLI for YouTube transcript preparation, diarization, chunking, and Codex summarization. Use when Codex needs to run or diagnose this repo's pipeline, process a YouTube URL end to end, inspect transcript artifacts, rerun summaries, choose between `qwen3-asr` and `whisper.cpp`, or explain where outputs are stored and how the workflow behaves.
 ---
 
-# YT Transcriber CLI
+# Voxcraft CLI
 
-Use this skill when working in the `yt-transcriber-cli` repository.
+Use this skill when working in the `voxcraft` repository.
 
 ## Quick Start
 
 Run the CLI from the repo venv:
 
 ```bash
-.venv/bin/yt-transcriber doctor
-.venv/bin/yt-transcriber process "<youtube-url>"
-.venv/bin/yt-transcriber process "<youtube-url>" --summarize
-.venv/bin/yt-transcriber summarize <youtube_id>
+.venv/bin/voxcraft doctor
+.venv/bin/voxcraft process "<youtube-url>"
+.venv/bin/voxcraft process "<youtube-url>" --summarize
+.venv/bin/voxcraft summarize <youtube_id>
 ```
 
-Prefer `.venv/bin/yt-transcriber` over assuming a global install.
+Prefer `.venv/bin/voxcraft` over assuming a global install.
 
 ## Default Behavior
 
@@ -30,7 +30,7 @@ Assume these defaults unless the code or README has changed:
 - Default forced aligner: `Qwen/Qwen3-ForcedAligner-0.6B`
 - Default diarization model: `pyannote/speaker-diarization-community-1`
 - Default language: `en`
-- Summary model: `gpt-5.4`
+- Summary model: `gpt-5.5`
 - Summary reasoning effort: `high`
 
 The pipeline downloads source audio, normalizes it to `source/audio.wav`, then feeds that WAV to ASR.
@@ -73,11 +73,11 @@ Do not combine `--diarize` with `--asr-backend whisper-cpp`; the CLI rejects tha
 Use these patterns directly:
 
 ```bash
-.venv/bin/yt-transcriber process "<youtube-url>"
-.venv/bin/yt-transcriber process "<youtube-url>" --summarize
-.venv/bin/yt-transcriber process "<youtube-url>" --diarize --summarize
-.venv/bin/yt-transcriber process "<youtube-url>" --asr-backend whisper-cpp --whisper-cpp-model ./models/ggml-large-v3.bin
-.venv/bin/yt-transcriber summarize <youtube_id> --force
+.venv/bin/voxcraft process "<youtube-url>"
+.venv/bin/voxcraft process "<youtube-url>" --summarize
+.venv/bin/voxcraft process "<youtube-url>" --diarize --summarize
+.venv/bin/voxcraft process "<youtube-url>" --asr-backend whisper-cpp --whisper-cpp-model ./models/ggml-large-v3.bin
+.venv/bin/voxcraft summarize <youtube_id> --force
 ```
 
 When testing a new URL, a good sequence is:
@@ -91,7 +91,7 @@ When testing a new URL, a good sequence is:
 Artifacts are stored under:
 
 ```text
-data/videos/<title-slug>--<youtube_id>/
+data/videos/<upload-date>--<title-slug>--<youtube_id>/
 ```
 
 Common files to inspect:
@@ -141,9 +141,9 @@ Use this logic:
 Before answering questions about behavior, prefer checking:
 
 - `README.md`
-- `src/youtube_local_pipeline/cli.py`
-- `src/youtube_local_pipeline/config.py`
-- `src/youtube_local_pipeline/pipeline.py`
-- `src/youtube_local_pipeline/transcribe.py`
+- `src/voxcraft/cli.py`
+- `src/voxcraft/config.py`
+- `src/voxcraft/pipeline.py`
+- `src/voxcraft/transcribe.py`
 
 The repo has changed quickly; verify the live defaults before stating them as facts.

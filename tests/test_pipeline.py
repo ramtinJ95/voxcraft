@@ -6,8 +6,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from youtube_local_pipeline.cli import _command_status
-from youtube_local_pipeline.config import (
+from voxcraft.cli import _command_status
+from voxcraft.config import (
     CONFIG_ENV_VAR,
     PipelineConfig,
     SummaryHarnessConfig,
@@ -16,20 +16,20 @@ from youtube_local_pipeline.config import (
     normalize_summary_provider,
     resolve_config_path,
 )
-from youtube_local_pipeline.download import _download_direct_subtitle, choose_subtitle_candidate, write_metadata_artifacts
-from youtube_local_pipeline.manifest import build_artifact_paths, initialize_workspace, resolve_video_root
-from youtube_local_pipeline.models import SourceKind, SubtitleCandidate, TranscriptSegment, TranscriptionDetails, VideoMetadata
-from youtube_local_pipeline.pipeline import _transcription_details_match, process_video, rechunk_video
-from youtube_local_pipeline.qwen_cli import apply_mlx_qwen3_asr_patch
-from youtube_local_pipeline.subtitles import load_segments, write_transcript_artifacts
-from youtube_local_pipeline.summarize import _build_summary_command, summarize_video, wrap_markdown_text
-from youtube_local_pipeline.transcribe import (
+from voxcraft.download import _download_direct_subtitle, choose_subtitle_candidate, write_metadata_artifacts
+from voxcraft.manifest import build_artifact_paths, initialize_workspace, resolve_video_root
+from voxcraft.models import SourceKind, SubtitleCandidate, TranscriptSegment, TranscriptionDetails, VideoMetadata
+from voxcraft.pipeline import _transcription_details_match, process_video, rechunk_video
+from voxcraft.qwen_cli import apply_mlx_qwen3_asr_patch
+from voxcraft.subtitles import load_segments, write_transcript_artifacts
+from voxcraft.summarize import _build_summary_command, summarize_video, wrap_markdown_text
+from voxcraft.transcribe import (
     TranscriptionRequest,
     resolve_whisper_cpp_model_path,
     resolve_qwen_command_args,
     transcribe_audio_file,
 )
-from youtube_local_pipeline.utils import read_json, write_json, write_text
+from voxcraft.utils import read_json, write_json, write_text
 
 
 def test_choose_subtitle_candidate_prefers_manual_english_first() -> None:
@@ -146,7 +146,7 @@ def test_download_direct_subtitle_uses_timeout(monkeypatch, tmp_path: Path) -> N
         captured_call["timeout"] = timeout
         return FakeResponse()
 
-    monkeypatch.setattr("youtube_local_pipeline.download.urlopen", fake_urlopen)
+    monkeypatch.setattr("voxcraft.download.urlopen", fake_urlopen)
 
     path = _download_direct_subtitle(
         tmp_path,
@@ -169,7 +169,7 @@ def test_process_video_dry_run_plans_asr_without_subtitles(monkeypatch, tmp_path
     def fake_probe_video(url: str) -> tuple[VideoMetadata, dict[str, object]]:
         return metadata, {"id": metadata.video_id, "webpage_url": metadata.url}
 
-    monkeypatch.setattr("youtube_local_pipeline.pipeline.probe_video", fake_probe_video)
+    monkeypatch.setattr("voxcraft.pipeline.probe_video", fake_probe_video)
 
     result = process_video(
         url=metadata.url,
@@ -199,7 +199,7 @@ def test_process_video_dry_run_uses_upload_date_in_new_workspace_name(monkeypatc
     def fake_probe_video(url: str) -> tuple[VideoMetadata, dict[str, object]]:
         return metadata, {"id": metadata.video_id, "webpage_url": metadata.url}
 
-    monkeypatch.setattr("youtube_local_pipeline.pipeline.probe_video", fake_probe_video)
+    monkeypatch.setattr("voxcraft.pipeline.probe_video", fake_probe_video)
 
     result = process_video(
         url=metadata.url,
@@ -265,7 +265,7 @@ def test_process_video_reuses_cached_subtitle_artifacts_without_probe(monkeypatc
     def fail_probe_video(url: str):
         raise AssertionError("metadata probe should be skipped for compatible cached artifacts")
 
-    monkeypatch.setattr("youtube_local_pipeline.pipeline.probe_video", fail_probe_video)
+    monkeypatch.setattr("voxcraft.pipeline.probe_video", fail_probe_video)
 
     result = process_video(
         url="https://www.youtube.com/watch?v=abc123",
@@ -355,8 +355,8 @@ def test_process_video_reruns_cached_subtitles_for_explicit_language(monkeypatch
         )
         return subtitle_path
 
-    monkeypatch.setattr("youtube_local_pipeline.pipeline.probe_video", fake_probe_video)
-    monkeypatch.setattr("youtube_local_pipeline.pipeline.download_subtitle_file", fake_download_subtitle_file)
+    monkeypatch.setattr("voxcraft.pipeline.probe_video", fake_probe_video)
+    monkeypatch.setattr("voxcraft.pipeline.download_subtitle_file", fake_download_subtitle_file)
 
     result = process_video(
         url="https://www.youtube.com/watch?v=abc123",
@@ -417,12 +417,12 @@ def test_rechunk_video_reports_refreshed_chunk_count(tmp_path: Path) -> None:
 
 
 def test_resolve_qwen_command_args_falls_back_to_module_wrapper(monkeypatch) -> None:
-    monkeypatch.setattr("youtube_local_pipeline.transcribe.shutil.which", lambda command: None)
-    monkeypatch.setattr("youtube_local_pipeline.transcribe.sys.executable", "/tmp/python")
+    monkeypatch.setattr("voxcraft.transcribe.shutil.which", lambda command: None)
+    monkeypatch.setattr("voxcraft.transcribe.sys.executable", "/tmp/python")
 
-    resolved = resolve_qwen_command_args("yt-transcriber-qwen")
+    resolved = resolve_qwen_command_args("voxcraft-qwen")
 
-    assert resolved == ["/tmp/python", "-m", "youtube_local_pipeline.qwen_cli"]
+    assert resolved == ["/tmp/python", "-m", "voxcraft.qwen_cli"]
 
 
 def test_command_status_marks_missing_required_tools() -> None:
@@ -443,7 +443,7 @@ def test_process_video_dry_run_applies_explicit_model_override(monkeypatch, tmp_
     def fake_probe_video(url: str) -> tuple[VideoMetadata, dict[str, object]]:
         return metadata, {"id": metadata.video_id, "webpage_url": metadata.url}
 
-    monkeypatch.setattr("youtube_local_pipeline.pipeline.probe_video", fake_probe_video)
+    monkeypatch.setattr("voxcraft.pipeline.probe_video", fake_probe_video)
 
     result = process_video(
         url=metadata.url,
@@ -470,7 +470,7 @@ def test_process_video_dry_run_uses_high_quality_qwen_model(monkeypatch, tmp_pat
     def fake_probe_video(url: str) -> tuple[VideoMetadata, dict[str, object]]:
         return metadata, {"id": metadata.video_id, "webpage_url": metadata.url}
 
-    monkeypatch.setattr("youtube_local_pipeline.pipeline.probe_video", fake_probe_video)
+    monkeypatch.setattr("voxcraft.pipeline.probe_video", fake_probe_video)
 
     result = process_video(
         url=metadata.url,
@@ -499,7 +499,7 @@ def test_process_video_dry_run_prefers_explicit_subtitle_language(monkeypatch, t
     def fake_probe_video(url: str) -> tuple[VideoMetadata, dict[str, object]]:
         return metadata, {"id": metadata.video_id, "webpage_url": metadata.url}
 
-    monkeypatch.setattr("youtube_local_pipeline.pipeline.probe_video", fake_probe_video)
+    monkeypatch.setattr("voxcraft.pipeline.probe_video", fake_probe_video)
 
     result = process_video(
         url=metadata.url,
@@ -645,8 +645,8 @@ def test_whisper_cpp_transcription_parses_json(monkeypatch, tmp_path: Path) -> N
         )
         return SimpleNamespace(returncode=0, stdout="", stderr="")
 
-    monkeypatch.setattr("youtube_local_pipeline.transcribe.shutil.which", lambda command: f"/usr/local/bin/{command}")
-    monkeypatch.setattr("youtube_local_pipeline.transcribe.subprocess.run", fake_run)
+    monkeypatch.setattr("voxcraft.transcribe.shutil.which", lambda command: f"/usr/local/bin/{command}")
+    monkeypatch.setattr("voxcraft.transcribe.subprocess.run", fake_run)
 
     result = transcribe_audio_file(
         request=TranscriptionRequest(
@@ -717,9 +717,9 @@ def test_qwen_transcription_parses_json_and_speaker_segments(monkeypatch, tmp_pa
             ],
         )
 
-    monkeypatch.setattr("youtube_local_pipeline.transcribe.shutil.which", lambda command: f"/usr/local/bin/{command}")
-    monkeypatch.setattr("youtube_local_pipeline.transcribe.subprocess.run", fake_run)
-    monkeypatch.setattr("youtube_local_pipeline.transcribe._diarize_qwen_payload_with_pyannote", fake_diarize)
+    monkeypatch.setattr("voxcraft.transcribe.shutil.which", lambda command: f"/usr/local/bin/{command}")
+    monkeypatch.setattr("voxcraft.transcribe.subprocess.run", fake_run)
+    monkeypatch.setattr("voxcraft.transcribe._diarize_qwen_payload_with_pyannote", fake_diarize)
 
     result = transcribe_audio_file(
         request=TranscriptionRequest(
@@ -757,7 +757,7 @@ def test_qwen_transcription_reuses_saved_payload_for_diarization_retry(monkeypat
                 {"start": 0.0, "end": 0.5, "text": "Hello"},
                 {"start": 0.5, "end": 0.9, "text": "there"},
             ],
-            "_yt_transcriber": {
+            "_voxcraft": {
                 "backend": "qwen3-asr",
                 "context": "",
                 "dtype": "float16",
@@ -783,9 +783,9 @@ def test_qwen_transcription_reuses_saved_payload_for_diarization_retry(monkeypat
             ],
         )
 
-    monkeypatch.setattr("youtube_local_pipeline.transcribe.shutil.which", lambda command: f"/usr/local/bin/{command}")
-    monkeypatch.setattr("youtube_local_pipeline.transcribe.subprocess.run", fail_run)
-    monkeypatch.setattr("youtube_local_pipeline.transcribe._diarize_qwen_payload_with_pyannote", fake_diarize)
+    monkeypatch.setattr("voxcraft.transcribe.shutil.which", lambda command: f"/usr/local/bin/{command}")
+    monkeypatch.setattr("voxcraft.transcribe.subprocess.run", fail_run)
+    monkeypatch.setattr("voxcraft.transcribe._diarize_qwen_payload_with_pyannote", fake_diarize)
 
     result = transcribe_audio_file(
         request=TranscriptionRequest(
@@ -816,7 +816,7 @@ def test_qwen_transcription_can_force_rerun_with_saved_payload(monkeypatch, tmp_
             "text": "Stale text",
             "language": "en",
             "segments": [{"start": 0.0, "end": 0.5, "text": "Stale"}],
-            "_yt_transcriber": {
+            "_voxcraft": {
                 "backend": "qwen3-asr",
                 "context": "",
                 "dtype": "float16",
@@ -852,9 +852,9 @@ def test_qwen_transcription_can_force_rerun_with_saved_payload(monkeypatch, tmp_
             [{"speaker": "SPEAKER_00", "start": 0.0, "end": 0.5, "text": "Fresh"}],
         )
 
-    monkeypatch.setattr("youtube_local_pipeline.transcribe.shutil.which", lambda command: f"/usr/local/bin/{command}")
-    monkeypatch.setattr("youtube_local_pipeline.transcribe.subprocess.run", fake_run)
-    monkeypatch.setattr("youtube_local_pipeline.transcribe._diarize_qwen_payload_with_pyannote", fake_diarize)
+    monkeypatch.setattr("voxcraft.transcribe.shutil.which", lambda command: f"/usr/local/bin/{command}")
+    monkeypatch.setattr("voxcraft.transcribe.subprocess.run", fake_run)
+    monkeypatch.setattr("voxcraft.transcribe._diarize_qwen_payload_with_pyannote", fake_diarize)
 
     result = transcribe_audio_file(
         request=TranscriptionRequest(
@@ -899,7 +899,7 @@ def test_process_video_dry_run_allows_whisper_cpp_override(monkeypatch, tmp_path
     def fake_probe_video(url: str) -> tuple[VideoMetadata, dict[str, object]]:
         return metadata, {"id": metadata.video_id, "webpage_url": metadata.url}
 
-    monkeypatch.setattr("youtube_local_pipeline.pipeline.probe_video", fake_probe_video)
+    monkeypatch.setattr("voxcraft.pipeline.probe_video", fake_probe_video)
 
     result = process_video(
         url=metadata.url,
@@ -1203,7 +1203,7 @@ def test_summarize_video_writes_chunk_and_final_outputs(monkeypatch, tmp_path: P
         write_text(output_path, content + "\n")
         return content
 
-    monkeypatch.setattr("youtube_local_pipeline.summarize.run_summary_cli", fake_run_summary_cli)
+    monkeypatch.setattr("voxcraft.summarize.run_summary_cli", fake_run_summary_cli)
 
     result = summarize_video(
         video_id="video123",
@@ -1321,7 +1321,7 @@ def test_summarize_video_reruns_when_summary_settings_change(monkeypatch, tmp_pa
         write_text(output_path, content)
         return content
 
-    monkeypatch.setattr("youtube_local_pipeline.summarize.run_summary_cli", fake_run_summary_cli)
+    monkeypatch.setattr("voxcraft.summarize.run_summary_cli", fake_run_summary_cli)
 
     summarize_video(
         video_id="video123",
@@ -1438,7 +1438,7 @@ def test_summarize_video_reruns_when_chunk_content_changes(monkeypatch, tmp_path
         write_text(output_path, content)
         return content
 
-    monkeypatch.setattr("youtube_local_pipeline.summarize.run_summary_cli", fake_run_summary_cli)
+    monkeypatch.setattr("voxcraft.summarize.run_summary_cli", fake_run_summary_cli)
 
     summarize_video(video_id="video123", config=PipelineConfig(base_data_dir=tmp_path))
 
@@ -1536,7 +1536,7 @@ def test_summarize_video_migrates_legacy_final_summary_and_reruns_missing_hashes
         write_text(output_path, content)
         return content
 
-    monkeypatch.setattr("youtube_local_pipeline.summarize.run_summary_cli", fake_run_summary_cli)
+    monkeypatch.setattr("voxcraft.summarize.run_summary_cli", fake_run_summary_cli)
 
     result = summarize_video(
         video_id="video123",
