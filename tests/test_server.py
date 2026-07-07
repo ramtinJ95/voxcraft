@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from voxcraft.jobs import JobOptions, JobStore
+from voxcraft.utils import write_json
 
 
 def test_job_store_claims_jobs_fifo_and_persists_options(tmp_path: Path) -> None:
@@ -21,21 +22,6 @@ def test_job_store_claims_jobs_fifo_and_persists_options(tmp_path: Path) -> None
     assert claimed.status == "running"
     assert claimed.options.language == "en"
     assert store.get_job(second.id).status == "queued"  # type: ignore[union-attr]
-
-
-def test_job_store_marks_interrupted_running_jobs_failed(tmp_path: Path) -> None:
-    store = JobStore(tmp_path / "jobs.sqlite3")
-    store.initialize()
-    job = store.create_job("https://www.youtube.com/watch?v=abc123")
-    assert store.claim_next_queued() is not None
-
-    interrupted = store.mark_interrupted_running_jobs()
-    updated = store.get_job(job.id)
-
-    assert interrupted == 1
-    assert updated is not None
-    assert updated.status == "failed"
-    assert updated.error == "Server restarted while this job was running."
 
 
 def test_server_requires_token(tmp_path: Path) -> None:
@@ -141,6 +127,95 @@ def test_worker_recovers_log_path_when_processing_fails(monkeypatch, tmp_path: P
     assert updated.status == "failed"
     assert updated.error == "transcription failed"
     assert updated.video_id == "abc123"
+    assert updated.log_path == str(log_path)
+
+
+def test_reconcile_recovers_completed_running_job_after_restart(tmp_path: Path) -> None:
+    from voxcraft.config import PipelineConfig
+    from voxcraft.server import reconcile_interrupted_jobs
+
+    config = PipelineConfig(base_data_dir=tmp_path / "videos")
+    store = JobStore(tmp_path / "jobs.sqlite3")
+    store.initialize()
+    job = store.create_job("https://www.youtube.com/watch?v=abc123")
+    assert store.claim_next_queued() is not None
+    workspace = tmp_path / "videos" / "demo--abc123"
+    final_path = workspace / "final.md"
+    log_path = workspace / "logs" / "pipeline.log"
+    final_path.parent.mkdir(parents=True)
+    log_path.parent.mkdir(parents=True)
+    final_path.write_text("# Final Summary\n", encoding="utf-8")
+    log_path.write_text("done\n", encoding="utf-8")
+
+    reconciled_count = reconcile_interrupted_jobs(store=store, config=config)
+    updated = store.get_job(job.id)
+
+    assert reconciled_count == 1
+    assert updated is not None
+    assert updated.status == "done"
+    assert updated.message == "Recovered completed job after server restart."
+    assert updated.video_id == "abc123"
+    assert updated.workspace_path == str(workspace)
+    assert updated.final_md_path == str(final_path)
+    assert updated.log_path == str(log_path)
+
+
+def test_reconcile_preserves_log_path_for_interrupted_job(tmp_path: Path) -> None:
+    from voxcraft.config import PipelineConfig
+    from voxcraft.server import reconcile_interrupted_jobs
+
+    config = PipelineConfig(base_data_dir=tmp_path / "videos")
+    store = JobStore(tmp_path / "jobs.sqlite3")
+    store.initialize()
+    job = store.create_job("https://www.youtube.com/watch?v=abc123")
+    assert store.claim_next_queued() is not None
+    workspace = tmp_path / "videos" / "demo--abc123"
+    log_path = workspace / "logs" / "pipeline.log"
+    log_path.parent.mkdir(parents=True)
+    log_path.write_text("interrupted\n", encoding="utf-8")
+
+    reconciled_count = reconcile_interrupted_jobs(store=store, config=config)
+    updated = store.get_job(job.id)
+
+    assert reconciled_count == 1
+    assert updated is not None
+    assert updated.status == "failed"
+    assert updated.message == "Interrupted."
+    assert updated.error == "Server restarted while this job was running."
+    assert updated.video_id == "abc123"
+    assert updated.workspace_path == str(workspace)
+    assert updated.log_path == str(log_path)
+
+
+def test_reconcile_uses_recorded_workspace_metadata_when_url_id_is_unavailable(tmp_path: Path) -> None:
+    from voxcraft.config import PipelineConfig
+    from voxcraft.server import reconcile_interrupted_jobs
+
+    config = PipelineConfig(base_data_dir=tmp_path / "videos")
+    store = JobStore(tmp_path / "jobs.sqlite3")
+    store.initialize()
+    job = store.create_job("https://example.com/not-a-youtube-url")
+    running_job = store.claim_next_queued()
+    assert running_job is not None
+    workspace = tmp_path / "custom-workspace"
+    final_path = workspace / "final.md"
+    log_path = workspace / "logs" / "pipeline.log"
+    final_path.parent.mkdir(parents=True)
+    log_path.parent.mkdir(parents=True)
+    write_json(workspace / "metadata.json", {"video_id": "abc123"})
+    final_path.write_text("# Final Summary\n", encoding="utf-8")
+    log_path.write_text("done\n", encoding="utf-8")
+    store.update_running(running_job.id, workspace_path=str(workspace), log_path=str(log_path))
+
+    reconciled_count = reconcile_interrupted_jobs(store=store, config=config)
+    updated = store.get_job(job.id)
+
+    assert reconciled_count == 1
+    assert updated is not None
+    assert updated.status == "done"
+    assert updated.video_id == "abc123"
+    assert updated.workspace_path == str(workspace)
+    assert updated.final_md_path == str(final_path)
     assert updated.log_path == str(log_path)
 
 

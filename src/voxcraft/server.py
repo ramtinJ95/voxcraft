@@ -15,7 +15,7 @@ from .jobs import JobOptions, JobRecord, JobStore
 from .manifest import resolve_artifact_paths
 from .pipeline import process_video
 from .summarize import summarize_video
-from .utils import extract_youtube_id
+from .utils import extract_youtube_id, read_json
 
 
 class CreateJobRequest(BaseModel):
@@ -157,7 +157,7 @@ def create_app(*, config: PipelineConfig, jobs_db_path: Path, token: str, start_
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         store.initialize()
-        store.mark_interrupted_running_jobs()
+        reconcile_interrupted_jobs(store=store, config=config)
         if start_worker:
             worker.start()
         try:
@@ -227,7 +227,34 @@ def create_app(*, config: PipelineConfig, jobs_db_path: Path, token: str, start_
 class FailurePaths(BaseModel):
     video_id: str | None = None
     workspace_path: str | None = None
+    final_md_path: str | None = None
     log_path: str | None = None
+
+
+def reconcile_interrupted_jobs(*, store: JobStore, config: PipelineConfig) -> int:
+    reconciled_count = 0
+    for job in store.running_jobs():
+        paths = _recover_failure_paths(job=job, config=config)
+        if paths.video_id and paths.workspace_path and paths.final_md_path:
+            store.mark_done(
+                job.id,
+                video_id=paths.video_id,
+                workspace_path=paths.workspace_path,
+                final_md_path=paths.final_md_path,
+                log_path=paths.log_path,
+                message="Recovered completed job after server restart.",
+            )
+        else:
+            store.mark_failed(
+                job.id,
+                "Server restarted while this job was running.",
+                message="Interrupted.",
+                video_id=paths.video_id,
+                workspace_path=paths.workspace_path,
+                log_path=paths.log_path,
+            )
+        reconciled_count += 1
+    return reconciled_count
 
 
 def _validate_request_against_config(request: CreateJobRequest, *, config: PipelineConfig) -> None:
@@ -240,19 +267,41 @@ def _validate_request_against_config(request: CreateJobRequest, *, config: Pipel
 
 
 def _recover_failure_paths(*, job: JobRecord, config: PipelineConfig) -> FailurePaths:
-    video_id = extract_youtube_id(job.url)
-    if video_id is None:
-        return FailurePaths()
-
-    paths = resolve_artifact_paths(config.base_data_dir, video_id)
-    if not paths.pipeline_log_path.exists():
+    video_id = job.video_id or extract_youtube_id(job.url)
+    root = Path(job.workspace_path) if job.workspace_path else None
+    if root is not None and video_id is None:
+        video_id = _read_workspace_video_id(root)
+    if root is None and video_id is not None:
+        root = resolve_artifact_paths(config.base_data_dir, video_id).root_dir
+    if root is None:
         return FailurePaths(video_id=video_id)
+
+    final_path = Path(job.final_md_path) if job.final_md_path else root / "final.md"
+    log_path = Path(job.log_path) if job.log_path else root / "logs" / "pipeline.log"
+    workspace_path = str(root) if root.exists() else None
+    final_md_path = str(final_path) if final_path.exists() else None
+    log_path_string = str(log_path) if log_path.exists() else None
 
     return FailurePaths(
         video_id=video_id,
-        workspace_path=str(paths.root_dir),
-        log_path=str(paths.pipeline_log_path),
+        workspace_path=workspace_path,
+        final_md_path=final_md_path,
+        log_path=log_path_string,
     )
+
+
+def _read_workspace_video_id(root: Path) -> str | None:
+    metadata_path = root / "metadata.json"
+    if not metadata_path.exists():
+        return None
+    try:
+        metadata = read_json(metadata_path)
+    except Exception:
+        return None
+    if not isinstance(metadata, dict):
+        return None
+    video_id = metadata.get("video_id")
+    return video_id if isinstance(video_id, str) and video_id else None
 
 
 def _job_response(job: JobRecord) -> JobResponse:
