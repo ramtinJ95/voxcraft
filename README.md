@@ -57,6 +57,10 @@ Optional external tools:
 - `whisper-cli`
   Required only for `--asr-backend whisper-cpp`
 
+Server mode setting:
+- `VOXCRAFT_SERVER_TOKEN`
+  Required API token for `voxcraft server`
+
 Python dependencies are installed with `uv sync` from [pyproject.toml](pyproject.toml).
 
 ## Install
@@ -125,6 +129,8 @@ Supported runtime environment variables:
   Exact whisper.cpp model file path
 - `WHISPER_CPP_MODEL_DIR`
   Directory containing whisper.cpp model files
+- `VOXCRAFT_SERVER_TOKEN`
+  API token required by `voxcraft server`
 
 The CLI does not load a `.env` file by itself. These variables must already be present in the shell environment.
 
@@ -261,6 +267,7 @@ voxcraft summarize <youtube_id> --provider gemini
 voxcraft summarize <youtube_id> --provider pi --model openai/gpt-5.5 --thinking-level high
 voxcraft rechunk <youtube_id>
 voxcraft prepare-summary <youtube_id>
+VOXCRAFT_SERVER_TOKEN=... voxcraft server --host 127.0.0.1 --port 8765
 ```
 
 Command behavior:
@@ -277,6 +284,48 @@ Command behavior:
   Regenerates chunk files from existing transcript segments
 - `prepare-summary`
   Rebuilds the summary payload from existing transcript artifacts
+- `server`
+  Runs the authenticated async job API for long-running URL-to-`final.md` jobs
+
+## Server Mode
+
+`voxcraft server` runs an authenticated async job API for long-running YouTube summary jobs.
+It uses the same pipeline and writes the same `data/videos/.../final.md` artifacts as the CLI.
+
+Start it on the Mac mini:
+
+```bash
+export VOXCRAFT_SERVER_TOKEN="choose-a-long-random-token"
+voxcraft server --host 127.0.0.1 --port 8765
+```
+
+For LAN or Tailscale access, bind to the specific LAN/Tailscale IP instead of exposing it publicly:
+
+```bash
+voxcraft server --host <lan-or-tailscale-ip> --port 8765
+```
+
+Submit one URL:
+
+```bash
+curl -sS -X POST http://<host>:8765/jobs \
+  -H "Authorization: Bearer $VOXCRAFT_SERVER_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"url":"https://www.youtube.com/watch?v=..."}'
+```
+
+Check status and fetch the final markdown:
+
+```bash
+curl -sS http://<host>:8765/jobs/<job_id> \
+  -H "Authorization: Bearer $VOXCRAFT_SERVER_TOKEN"
+
+curl -sS http://<host>:8765/jobs/<job_id>/final.md \
+  -H "Authorization: Bearer $VOXCRAFT_SERVER_TOKEN"
+```
+
+The MVP worker processes one job at a time. Job state is stored in SQLite at
+`data/server/jobs.sqlite3` by default, or at `--jobs-db <path>` when provided.
 
 ## Workflow
 
