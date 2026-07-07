@@ -334,6 +334,10 @@ curl -sS http://<host>:8765/jobs/<job_id>/final.md \
 
 The MVP worker processes one job at a time. Job state is stored in SQLite at
 `data/server/jobs.sqlite3` by default, or at `--jobs-db <path>` when provided.
+On startup, the server reconciles jobs that were `running` during a restart: if
+the workspace already has `final.md`, the job is marked done; otherwise the job
+is marked failed and any discovered `logs/pipeline.log` path is preserved for
+debugging.
 
 The CLI can also act as a client for the server. Configure the server URL and token:
 

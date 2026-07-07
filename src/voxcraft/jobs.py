@@ -121,6 +121,13 @@ class JobStore:
             row = connection.execute("SELECT * FROM jobs ORDER BY created_at DESC, id DESC LIMIT 1").fetchone()
         return self._row_to_job(row) if row is not None else None
 
+    def running_jobs(self) -> list[JobRecord]:
+        with self._locked_connection() as connection:
+            rows = connection.execute(
+                "SELECT * FROM jobs WHERE status = 'running' ORDER BY started_at ASC, id ASC"
+            ).fetchall()
+        return [self._row_to_job(row) for row in rows]
+
     def claim_next_queued(self) -> JobRecord | None:
         now = utc_now()
         with self._locked_connection() as connection:
@@ -171,6 +178,7 @@ class JobStore:
         workspace_path: str,
         final_md_path: str,
         log_path: str | None,
+        message: str = "Done.",
     ) -> None:
         now = utc_now()
         self._update(
@@ -183,7 +191,7 @@ class JobStore:
                 "workspace_path": workspace_path,
                 "final_md_path": final_md_path,
                 "log_path": log_path,
-                "message": "Done.",
+                "message": message,
                 "error": None,
             },
         )
@@ -213,19 +221,6 @@ class JobStore:
         if log_path is not None:
             updates["log_path"] = log_path
         self._update(job_id, updates)
-
-    def mark_interrupted_running_jobs(self) -> int:
-        now = utc_now()
-        with self._locked_connection() as connection:
-            cursor = connection.execute(
-                """
-                UPDATE jobs
-                SET status = 'failed', updated_at = ?, finished_at = ?, message = ?, error = ?
-                WHERE status = 'running'
-                """,
-                (now, now, "Interrupted.", "Server restarted while this job was running."),
-            )
-            return cursor.rowcount
 
     def _update(self, job_id: str, updates: dict[str, Any]) -> None:
         if not updates:
