@@ -18,8 +18,8 @@ DEFAULT_SUMMARY_PROVIDER = "codex"
 DEFAULT_CODEX_SUMMARY_MODEL = "gpt-5.5"
 DEFAULT_CODEX_THINKING_LEVEL = "high"
 SUPPORTED_SUMMARY_PROVIDERS = ("codex", "claude", "gemini", "pi")
-CONFIG_ENV_VAR = "YT_TRANSCRIBER_CONFIG"
-CONFIG_DIR_NAME = "yt-transcriber"
+CONFIG_ENV_VAR = "VOXCRAFT_CONFIG"
+CONFIG_DIR_NAME = "voxcraft"
 CONFIG_FILE_NAME = "config.json"
 
 
@@ -148,7 +148,7 @@ class PipelineConfig(BaseModel):
     qwen_default_model_english: str = QWEN_1_7B_8BIT_MODEL
     qwen_default_model_multilingual: str = QWEN_1_7B_8BIT_MODEL
     qwen_high_quality_model: str = QWEN_1_7B_MODEL
-    qwen_command: str = Field(default_factory=lambda: _default_console_script("yt-transcriber-qwen"))
+    qwen_command: str = Field(default_factory=lambda: _default_console_script("voxcraft-qwen"))
     qwen_context: str = ""
     qwen_forced_aligner: str = QWEN_FORCED_ALIGNER_FP16_MODEL
     qwen_pyannote_model: str = PYANNOTE_COMMUNITY_1_MODEL

@@ -297,11 +297,11 @@ pip install yt-dlp lightning-whisper-mlx webvtt-py typer pydantic rich
 
 ### Suggested code layout
 ```text
-youtube_local_pipeline/
+voxcraft/
   pyproject.toml
   README.md
   src/
-    youtube_local_pipeline/
+    voxcraft/
       __init__.py
       cli.py
       config.py

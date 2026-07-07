@@ -5,7 +5,7 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any
 
-PATCH_MARKER = "_yt_transcriber_qwen_patch_applied"
+PATCH_MARKER = "_voxcraft_qwen_patch_applied"
 
 
 def _inject_tied_lm_head_weights(weights: dict[str, Any]) -> dict[str, Any]:

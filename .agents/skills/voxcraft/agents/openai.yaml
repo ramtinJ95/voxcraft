@@ -1,0 +1,4 @@
+interface:
+  display_name: "Voxcraft CLI"
+  short_description: "Operate the local YouTube transcript and summary pipeline."
+  default_prompt: "Use the local voxcraft CLI to process a YouTube video, inspect artifacts, diagnose runs, or summarize an existing transcript workspace."
