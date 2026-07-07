@@ -88,6 +88,7 @@ Use these patterns directly:
 .venv/bin/voxcraft submit-job "<youtube-url>" --wait 300 --print-final
 .venv/bin/voxcraft check-job <job_id> --wait 300 --print-final
 .venv/bin/voxcraft fetch-final <job_id>
+.venv/bin/voxcraft fetch-final <job_id> --output ./final.md
 ```
 
 When testing a new URL, a good sequence is:

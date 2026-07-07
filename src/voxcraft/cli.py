@@ -31,6 +31,7 @@ from .jobs import JobOptions
 from .pipeline import prepare_summary_input, process_video, rechunk_video
 from .summarize import summarize_video
 from .transcribe import describe_qwen_command
+from .utils import write_text
 
 app = typer.Typer(help="Local YouTube transcript preparation pipeline.")
 console = Console()
@@ -156,6 +157,33 @@ def _print_job_response(response: ServerJobResponse) -> None:
 def _handle_client_error(exc: ServerClientError) -> None:
     prefix = f"HTTP {exc.status_code}: " if exc.status_code is not None else ""
     raise typer.BadParameter(f"{prefix}{exc}") from exc
+
+
+def _save_text_output(content: str, output_path: Path, *, default_name: str) -> Path:
+    resolved_output = output_path.expanduser()
+    if resolved_output.exists() and resolved_output.is_dir():
+        resolved_output = resolved_output / default_name
+    write_text(resolved_output, content)
+    return resolved_output
+
+
+def _handle_final_markdown(
+    client: VoxcraftServerClient,
+    job_id: str,
+    *,
+    print_final: bool,
+    output: Path | None,
+) -> None:
+    final_markdown = client.get_final_markdown(job_id)
+    saved_path: Path | None = None
+    if output is not None:
+        saved_path = _save_text_output(final_markdown, output, default_name="final.md")
+
+    if print_final or output is None:
+        sys.stdout.write(final_markdown)
+        return
+
+    console.print(f"Saved final.md: {saved_path}")
 
 
 @app.command()
@@ -498,6 +526,7 @@ def submit_job(
     wait: float = typer.Option(0.0, min=0.0, help="Seconds to poll after submitting."),
     poll_interval: float = typer.Option(10.0, min=1.0, help="Seconds between status polls when --wait is used."),
     print_final: bool = typer.Option(False, help="Print final.md if the job is done before --wait expires."),
+    output: Path | None = typer.Option(None, help="Write final.md to this local path if the job finishes."),
     language: str | None = typer.Option(None, help="Preferred subtitle/transcription language."),
     high_quality: bool = typer.Option(False, help="Use the highest-accuracy transcription profile."),
     force: bool = typer.Option(False, help="Ignore cached artifacts and recompute the pipeline."),
@@ -538,8 +567,8 @@ def submit_job(
         )
         if wait > 0 and response.job.status in {"queued", "running"}:
             response = client.wait_for_job(response.job.id, timeout_sec=wait, poll_interval_sec=poll_interval)
-        if print_final and response.job.status == "done":
-            sys.stdout.write(client.get_final_markdown(response.job.id))
+        if response.job.status == "done" and (print_final or output is not None):
+            _handle_final_markdown(client, response.job.id, print_final=print_final, output=output)
             return
         _print_job_response(response)
     except ServerClientError as exc:
@@ -562,13 +591,14 @@ def check_job(
     wait: float = typer.Option(0.0, min=0.0, help="Seconds to poll before returning."),
     poll_interval: float = typer.Option(10.0, min=1.0, help="Seconds between status polls when --wait is used."),
     print_final: bool = typer.Option(False, help="Print final.md instead of the status table when done."),
+    output: Path | None = typer.Option(None, help="Write final.md to this local path when done."),
 ) -> None:
     """Check a remote voxcraft job."""
     client = _server_client(server_url=server_url, token=token)
     try:
         response = client.wait_for_job(job_id, timeout_sec=wait, poll_interval_sec=poll_interval) if wait > 0 else client.get_job(job_id)
-        if print_final and response.job.status == "done":
-            sys.stdout.write(client.get_final_markdown(job_id))
+        if response.job.status == "done" and (print_final or output is not None):
+            _handle_final_markdown(client, job_id, print_final=print_final, output=output)
             return
         _print_job_response(response)
     except ServerClientError as exc:
@@ -609,11 +639,12 @@ def fetch_final(
         envvar=SERVER_TOKEN_ENV_VAR,
         help=f"Voxcraft server API token. Defaults to ${SERVER_TOKEN_ENV_VAR}.",
     ),
+    output: Path | None = typer.Option(None, help="Write final.md to this local path instead of stdout."),
 ) -> None:
-    """Print a completed remote job's final.md."""
+    """Print or save a completed remote job's final.md."""
     client = _server_client(server_url=server_url, token=token)
     try:
-        sys.stdout.write(client.get_final_markdown(job_id))
+        _handle_final_markdown(client, job_id, print_final=False, output=output)
     except ServerClientError as exc:
         _handle_client_error(exc)
 

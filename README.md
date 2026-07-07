@@ -273,6 +273,7 @@ VOXCRAFT_SERVER_TOKEN=... voxcraft server --host 127.0.0.1 --port 8765
 VOXCRAFT_SERVER_URL=http://<host>:8765 VOXCRAFT_SERVER_TOKEN=... voxcraft submit-job "<youtube-url>" --wait 300 --print-final
 voxcraft check-job <job_id>
 voxcraft fetch-final <job_id>
+voxcraft fetch-final <job_id> --output ./final.md
 voxcraft fetch-log <job_id>
 ```
 
@@ -363,8 +364,10 @@ Check or fetch later:
 ```bash
 voxcraft check-job <job_id>
 voxcraft check-job <job_id> --wait 300 --print-final
+voxcraft check-job <job_id> --wait 300 --output ./final.md
 voxcraft latest-job
 voxcraft fetch-final <job_id>
+voxcraft fetch-final <job_id> --output ./final.md
 voxcraft fetch-log <job_id>
 ```
 
