@@ -12,8 +12,10 @@ from pydantic import BaseModel, Field, model_validator
 
 from .config import PipelineConfig, normalize_asr_backend
 from .jobs import JobOptions, JobRecord, JobStore
+from .manifest import resolve_artifact_paths
 from .pipeline import process_video
 from .summarize import summarize_video
+from .utils import extract_youtube_id
 
 
 class CreateJobRequest(BaseModel):
@@ -136,7 +138,14 @@ class JobWorker:
                 log_path=str(summary_result.artifact_root / "logs" / "pipeline.log"),
             )
         except Exception as exc:
-            self.store.mark_failed(job.id, str(exc))
+            recovered_paths = _recover_failure_paths(job=job, config=self.config)
+            self.store.mark_failed(
+                job.id,
+                str(exc),
+                video_id=recovered_paths.video_id,
+                workspace_path=recovered_paths.workspace_path,
+                log_path=recovered_paths.log_path,
+            )
 
 
 def create_app(*, config: PipelineConfig, jobs_db_path: Path, token: str, start_worker: bool = True) -> FastAPI:
@@ -175,6 +184,7 @@ def create_app(*, config: PipelineConfig, jobs_db_path: Path, token: str, start_
 
     @app.post("/jobs", dependencies=[auth_dependency], response_model=JobResponse, status_code=202)
     def create_job(request: CreateJobRequest, response: Response) -> JobResponse:
+        _validate_request_against_config(request, config=config)
         job = store.create_job(url=request.url, options=request.to_job_options())
         response.headers["Location"] = f"/jobs/{job.id}"
         return _job_response(job)
@@ -212,6 +222,37 @@ def create_app(*, config: PipelineConfig, jobs_db_path: Path, token: str, start_
         return path.read_text(encoding="utf-8")
 
     return app
+
+
+class FailurePaths(BaseModel):
+    video_id: str | None = None
+    workspace_path: str | None = None
+    log_path: str | None = None
+
+
+def _validate_request_against_config(request: CreateJobRequest, *, config: PipelineConfig) -> None:
+    effective_asr_backend = request.asr_backend or config.default_asr_backend
+    if request.diarize and normalize_asr_backend(effective_asr_backend) == "whisper-cpp":
+        raise HTTPException(
+            status_code=422,
+            detail="diarize is only supported with qwen3-asr",
+        )
+
+
+def _recover_failure_paths(*, job: JobRecord, config: PipelineConfig) -> FailurePaths:
+    video_id = extract_youtube_id(job.url)
+    if video_id is None:
+        return FailurePaths()
+
+    paths = resolve_artifact_paths(config.base_data_dir, video_id)
+    if not paths.pipeline_log_path.exists():
+        return FailurePaths(video_id=video_id)
+
+    return FailurePaths(
+        video_id=video_id,
+        workspace_path=str(paths.root_dir),
+        log_path=str(paths.pipeline_log_path),
+    )
 
 
 def _job_response(job: JobRecord) -> JobResponse:
