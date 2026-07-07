@@ -19,6 +19,15 @@ from .config import (
     normalize_asr_backend,
     normalize_summary_provider,
 )
+from .client import (
+    DEFAULT_SERVER_URL,
+    SERVER_TOKEN_ENV_VAR,
+    SERVER_URL_ENV_VAR,
+    ServerClientError,
+    ServerJobResponse,
+    VoxcraftServerClient,
+)
+from .jobs import JobOptions
 from .pipeline import prepare_summary_input, process_video, rechunk_video
 from .summarize import summarize_video
 from .transcribe import describe_qwen_command
@@ -72,6 +81,81 @@ def _load_runtime_config(
         if config_path is not None:
             raise typer.BadParameter(str(exc), param_hint="--config") from exc
         raise typer.BadParameter(str(exc)) from exc
+
+
+def _server_client(
+    *,
+    server_url: str | None,
+    token: str | None,
+    timeout: float = 30.0,
+) -> VoxcraftServerClient:
+    resolved_token = token or os.getenv(SERVER_TOKEN_ENV_VAR)
+    if not resolved_token:
+        raise typer.BadParameter(f"Set --token or ${SERVER_TOKEN_ENV_VAR}.")
+    return VoxcraftServerClient(
+        base_url=server_url or os.getenv(SERVER_URL_ENV_VAR) or DEFAULT_SERVER_URL,
+        token=resolved_token,
+        timeout=timeout,
+    )
+
+
+def _job_payload(
+    *,
+    url: str,
+    language: str | None,
+    high_quality: bool,
+    force: bool,
+    asr_backend: str | None,
+    model: str | None,
+    diarize: bool,
+    num_speakers: int | None,
+    min_speakers: int,
+    max_speakers: int,
+) -> dict[str, object]:
+    payload = JobOptions(
+        language=language,
+        high_quality=high_quality,
+        force=force,
+        asr_backend=asr_backend,
+        model=model,
+        diarize=diarize,
+        num_speakers=num_speakers,
+        min_speakers=min_speakers,
+        max_speakers=max_speakers,
+    ).model_dump(exclude_none=True)
+    return {"url": url, **payload}
+
+
+def _print_job_response(response: ServerJobResponse) -> None:
+    job = response.job
+    table = Table(title="Voxcraft Job")
+    table.add_column("Field")
+    table.add_column("Value")
+    table.add_row("job_id", job.id)
+    table.add_row("status", job.status)
+    table.add_row("url", job.url)
+    table.add_row("message", job.message or "")
+    table.add_row("created_at", job.created_at)
+    table.add_row("updated_at", job.updated_at)
+    if job.video_id:
+        table.add_row("video_id", job.video_id)
+    if job.workspace_path:
+        table.add_row("workspace", job.workspace_path)
+    if job.final_md_path:
+        table.add_row("final.md", job.final_md_path)
+    if job.log_path:
+        table.add_row("log", job.log_path)
+    if job.error:
+        table.add_row("error", job.error)
+    if response.final_md_url:
+        table.add_row("final_md_url", response.final_md_url)
+    table.add_row("log_url", response.log_url)
+    console.print(table)
+
+
+def _handle_client_error(exc: ServerClientError) -> None:
+    prefix = f"HTTP {exc.status_code}: " if exc.status_code is not None else ""
+    raise typer.BadParameter(f"{prefix}{exc}") from exc
 
 
 @app.command()
@@ -396,6 +480,164 @@ def summarize(
     config, _ = _load_runtime_config(ctx, overrides=config_overrides)
     result = summarize_video(video_id=video_id, config=config, model=model, thinking_level=thinking_level, force=force)
     console.print(f"Summarized {result.metadata.video_id} into {result.final_summary_path}.")
+
+
+@app.command("submit-job")
+def submit_job(
+    url: str,
+    server_url: str | None = typer.Option(
+        None,
+        envvar=SERVER_URL_ENV_VAR,
+        help=f"Voxcraft server URL. Defaults to ${SERVER_URL_ENV_VAR} or {DEFAULT_SERVER_URL}.",
+    ),
+    token: str | None = typer.Option(
+        None,
+        envvar=SERVER_TOKEN_ENV_VAR,
+        help=f"Voxcraft server API token. Defaults to ${SERVER_TOKEN_ENV_VAR}.",
+    ),
+    wait: float = typer.Option(0.0, min=0.0, help="Seconds to poll after submitting."),
+    poll_interval: float = typer.Option(10.0, min=1.0, help="Seconds between status polls when --wait is used."),
+    print_final: bool = typer.Option(False, help="Print final.md if the job is done before --wait expires."),
+    language: str | None = typer.Option(None, help="Preferred subtitle/transcription language."),
+    high_quality: bool = typer.Option(False, help="Use the highest-accuracy transcription profile."),
+    force: bool = typer.Option(False, help="Ignore cached artifacts and recompute the pipeline."),
+    asr_backend: str | None = typer.Option(None, help="Override ASR backend: qwen3-asr or whisper-cpp."),
+    model: str | None = typer.Option(None, help="Override the ASR model alias or path."),
+    diarize: bool = typer.Option(False, help="Enable pyannote speaker diarization for qwen3-asr."),
+    num_speakers: int | None = typer.Option(None, min=1, help="Fixed speaker count for diarization."),
+    min_speakers: int = typer.Option(1, min=1, help="Minimum speaker count for diarization auto mode."),
+    max_speakers: int = typer.Option(8, min=1, help="Maximum speaker count for diarization auto mode."),
+) -> None:
+    """Submit a YouTube URL to a remote voxcraft server."""
+    if max_speakers < min_speakers:
+        raise typer.BadParameter("--max-speakers must be >= --min-speakers.")
+    normalized_asr_backend: str | None = None
+    if asr_backend is not None:
+        try:
+            normalized_asr_backend = normalize_asr_backend(asr_backend)
+        except ValueError as exc:
+            raise typer.BadParameter(str(exc)) from exc
+    if normalized_asr_backend == "whisper-cpp" and diarize:
+        raise typer.BadParameter("--diarize is only supported with --asr-backend qwen3-asr.")
+
+    client = _server_client(server_url=server_url, token=token)
+    try:
+        response = client.create_job(
+            _job_payload(
+                url=url,
+                language=language,
+                high_quality=high_quality,
+                force=force,
+                asr_backend=normalized_asr_backend,
+                model=model,
+                diarize=diarize,
+                num_speakers=num_speakers,
+                min_speakers=min_speakers,
+                max_speakers=max_speakers,
+            )
+        )
+        if wait > 0 and response.job.status in {"queued", "running"}:
+            response = client.wait_for_job(response.job.id, timeout_sec=wait, poll_interval_sec=poll_interval)
+        if print_final and response.job.status == "done":
+            sys.stdout.write(client.get_final_markdown(response.job.id))
+            return
+        _print_job_response(response)
+    except ServerClientError as exc:
+        _handle_client_error(exc)
+
+
+@app.command("check-job")
+def check_job(
+    job_id: str,
+    server_url: str | None = typer.Option(
+        None,
+        envvar=SERVER_URL_ENV_VAR,
+        help=f"Voxcraft server URL. Defaults to ${SERVER_URL_ENV_VAR} or {DEFAULT_SERVER_URL}.",
+    ),
+    token: str | None = typer.Option(
+        None,
+        envvar=SERVER_TOKEN_ENV_VAR,
+        help=f"Voxcraft server API token. Defaults to ${SERVER_TOKEN_ENV_VAR}.",
+    ),
+    wait: float = typer.Option(0.0, min=0.0, help="Seconds to poll before returning."),
+    poll_interval: float = typer.Option(10.0, min=1.0, help="Seconds between status polls when --wait is used."),
+    print_final: bool = typer.Option(False, help="Print final.md instead of the status table when done."),
+) -> None:
+    """Check a remote voxcraft job."""
+    client = _server_client(server_url=server_url, token=token)
+    try:
+        response = client.wait_for_job(job_id, timeout_sec=wait, poll_interval_sec=poll_interval) if wait > 0 else client.get_job(job_id)
+        if print_final and response.job.status == "done":
+            sys.stdout.write(client.get_final_markdown(job_id))
+            return
+        _print_job_response(response)
+    except ServerClientError as exc:
+        _handle_client_error(exc)
+
+
+@app.command("latest-job")
+def latest_job(
+    server_url: str | None = typer.Option(
+        None,
+        envvar=SERVER_URL_ENV_VAR,
+        help=f"Voxcraft server URL. Defaults to ${SERVER_URL_ENV_VAR} or {DEFAULT_SERVER_URL}.",
+    ),
+    token: str | None = typer.Option(
+        None,
+        envvar=SERVER_TOKEN_ENV_VAR,
+        help=f"Voxcraft server API token. Defaults to ${SERVER_TOKEN_ENV_VAR}.",
+    ),
+) -> None:
+    """Show the latest remote voxcraft job."""
+    client = _server_client(server_url=server_url, token=token)
+    try:
+        _print_job_response(client.get_latest_job())
+    except ServerClientError as exc:
+        _handle_client_error(exc)
+
+
+@app.command("fetch-final")
+def fetch_final(
+    job_id: str,
+    server_url: str | None = typer.Option(
+        None,
+        envvar=SERVER_URL_ENV_VAR,
+        help=f"Voxcraft server URL. Defaults to ${SERVER_URL_ENV_VAR} or {DEFAULT_SERVER_URL}.",
+    ),
+    token: str | None = typer.Option(
+        None,
+        envvar=SERVER_TOKEN_ENV_VAR,
+        help=f"Voxcraft server API token. Defaults to ${SERVER_TOKEN_ENV_VAR}.",
+    ),
+) -> None:
+    """Print a completed remote job's final.md."""
+    client = _server_client(server_url=server_url, token=token)
+    try:
+        sys.stdout.write(client.get_final_markdown(job_id))
+    except ServerClientError as exc:
+        _handle_client_error(exc)
+
+
+@app.command("fetch-log")
+def fetch_log(
+    job_id: str,
+    server_url: str | None = typer.Option(
+        None,
+        envvar=SERVER_URL_ENV_VAR,
+        help=f"Voxcraft server URL. Defaults to ${SERVER_URL_ENV_VAR} or {DEFAULT_SERVER_URL}.",
+    ),
+    token: str | None = typer.Option(
+        None,
+        envvar=SERVER_TOKEN_ENV_VAR,
+        help=f"Voxcraft server API token. Defaults to ${SERVER_TOKEN_ENV_VAR}.",
+    ),
+) -> None:
+    """Print a remote job's pipeline log."""
+    client = _server_client(server_url=server_url, token=token)
+    try:
+        sys.stdout.write(client.get_log(job_id))
+    except ServerClientError as exc:
+        _handle_client_error(exc)
 
 
 @app.command()

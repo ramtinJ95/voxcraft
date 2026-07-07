@@ -131,6 +131,8 @@ Supported runtime environment variables:
   Directory containing whisper.cpp model files
 - `VOXCRAFT_SERVER_TOKEN`
   API token required by `voxcraft server`
+- `VOXCRAFT_SERVER_URL`
+  Default base URL for remote job client commands such as `submit-job` and `check-job`
 
 The CLI does not load a `.env` file by itself. These variables must already be present in the shell environment.
 
@@ -268,6 +270,10 @@ voxcraft summarize <youtube_id> --provider pi --model openai/gpt-5.5 --thinking-
 voxcraft rechunk <youtube_id>
 voxcraft prepare-summary <youtube_id>
 VOXCRAFT_SERVER_TOKEN=... voxcraft server --host 127.0.0.1 --port 8765
+VOXCRAFT_SERVER_URL=http://<host>:8765 VOXCRAFT_SERVER_TOKEN=... voxcraft submit-job "<youtube-url>" --wait 300 --print-final
+voxcraft check-job <job_id>
+voxcraft fetch-final <job_id>
+voxcraft fetch-log <job_id>
 ```
 
 Command behavior:
@@ -286,6 +292,8 @@ Command behavior:
   Rebuilds the summary payload from existing transcript artifacts
 - `server`
   Runs the authenticated async job API for long-running URL-to-`final.md` jobs
+- `submit-job`, `check-job`, `latest-job`, `fetch-final`, `fetch-log`
+  Talk to a remote `voxcraft server` using `$VOXCRAFT_SERVER_URL` and `$VOXCRAFT_SERVER_TOKEN`
 
 ## Server Mode
 
@@ -326,6 +334,35 @@ curl -sS http://<host>:8765/jobs/<job_id>/final.md \
 
 The MVP worker processes one job at a time. Job state is stored in SQLite at
 `data/server/jobs.sqlite3` by default, or at `--jobs-db <path>` when provided.
+
+The CLI can also act as a client for the server. Configure the server URL and token:
+
+```bash
+export VOXCRAFT_SERVER_URL="http://<host>:8765"
+export VOXCRAFT_SERVER_TOKEN="choose-a-long-random-token"
+```
+
+Submit a job and wait up to five minutes for short videos:
+
+```bash
+voxcraft submit-job "https://www.youtube.com/watch?v=..." --wait 300
+```
+
+If the job is already done within the wait window, print the final markdown directly:
+
+```bash
+voxcraft submit-job "https://www.youtube.com/watch?v=..." --wait 300 --print-final
+```
+
+Check or fetch later:
+
+```bash
+voxcraft check-job <job_id>
+voxcraft check-job <job_id> --wait 300 --print-final
+voxcraft latest-job
+voxcraft fetch-final <job_id>
+voxcraft fetch-log <job_id>
+```
 
 ## Workflow
 
