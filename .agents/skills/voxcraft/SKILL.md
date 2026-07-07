@@ -16,6 +16,9 @@ Run the CLI from the repo venv:
 .venv/bin/voxcraft process "<youtube-url>"
 .venv/bin/voxcraft process "<youtube-url>" --summarize
 .venv/bin/voxcraft summarize <youtube_id>
+.venv/bin/voxcraft submit-job "<youtube-url>" --wait 300
+.venv/bin/voxcraft check-job <job_id>
+.venv/bin/voxcraft fetch-final <job_id>
 ```
 
 Prefer `.venv/bin/voxcraft` over assuming a global install.
@@ -51,6 +54,10 @@ Use `rechunk <video_id>` when chunk boundaries need regeneration from existing t
 
 Use `prepare-summary <video_id>` when summary payload artifacts need regeneration from an existing transcript.
 
+Use `submit-job "<url>"` when the user wants the Mac mini/server workflow. It requires `VOXCRAFT_SERVER_URL` and `VOXCRAFT_SERVER_TOKEN` in the environment unless passed as flags.
+
+Use `check-job <job_id>` to poll a previously submitted server job. Use `fetch-final <job_id>` only when you need the raw completed `final.md` markdown.
+
 ## High-Value Flags
 
 Prefer these flags when they are actually needed:
@@ -78,6 +85,9 @@ Use these patterns directly:
 .venv/bin/voxcraft process "<youtube-url>" --diarize --summarize
 .venv/bin/voxcraft process "<youtube-url>" --asr-backend whisper-cpp --whisper-cpp-model ./models/ggml-large-v3.bin
 .venv/bin/voxcraft summarize <youtube_id> --force
+.venv/bin/voxcraft submit-job "<youtube-url>" --wait 300 --print-final
+.venv/bin/voxcraft check-job <job_id> --wait 300 --print-final
+.venv/bin/voxcraft fetch-final <job_id>
 ```
 
 When testing a new URL, a good sequence is:
@@ -85,6 +95,13 @@ When testing a new URL, a good sequence is:
 1. `doctor`
 2. `process "<url>" --dry-run`
 3. `process "<url>" --summarize`
+
+For server jobs, a good sequence is:
+
+1. Confirm `VOXCRAFT_SERVER_URL` and `VOXCRAFT_SERVER_TOKEN` are set.
+2. `submit-job "<url>" --wait 300 --print-final`
+3. If still queued/running, tell the user the `job_id` and later run `check-job <job_id> --wait 300 --print-final`.
+4. If the job failed, run `fetch-log <job_id>` and summarize the failure.
 
 ## Output Layout
 
