@@ -88,6 +88,62 @@ def test_server_creates_queued_job(tmp_path: Path) -> None:
     assert payload["log_url"].endswith("/log")
 
 
+def test_server_rejects_diarization_when_default_backend_is_whisper(tmp_path: Path) -> None:
+    pytest.importorskip("fastapi")
+    pytest.importorskip("httpx")
+    from fastapi.testclient import TestClient
+
+    from voxcraft.config import PipelineConfig
+    from voxcraft.server import create_app
+
+    app = create_app(
+        config=PipelineConfig(base_data_dir=tmp_path / "videos", default_asr_backend="whisper-cpp"),
+        jobs_db_path=tmp_path / "jobs.sqlite3",
+        token="secret",
+        start_worker=False,
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/jobs",
+            headers={"X-Voxcraft-Token": "secret"},
+            json={"url": "https://www.youtube.com/watch?v=abc123", "diarize": True},
+        )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "diarize is only supported with qwen3-asr"
+
+
+def test_worker_recovers_log_path_when_processing_fails(monkeypatch, tmp_path: Path) -> None:
+    from voxcraft.config import PipelineConfig
+    from voxcraft.server import JobWorker
+
+    config = PipelineConfig(base_data_dir=tmp_path / "videos")
+    store = JobStore(tmp_path / "jobs.sqlite3")
+    store.initialize()
+    job = store.create_job("https://www.youtube.com/watch?v=abc123")
+    running_job = store.claim_next_queued()
+    assert running_job is not None
+
+    log_path = tmp_path / "videos" / "demo--abc123" / "logs" / "pipeline.log"
+
+    def fake_process_video(**kwargs):
+        log_path.parent.mkdir(parents=True)
+        log_path.write_text("started\nfailed\n", encoding="utf-8")
+        raise RuntimeError("transcription failed")
+
+    monkeypatch.setattr("voxcraft.server.process_video", fake_process_video)
+
+    JobWorker(store=store, config=config)._run_job(running_job)
+    updated = store.get_job(job.id)
+
+    assert updated is not None
+    assert updated.status == "failed"
+    assert updated.error == "transcription failed"
+    assert updated.video_id == "abc123"
+    assert updated.log_path == str(log_path)
+
+
 def test_server_returns_final_markdown_for_done_job(tmp_path: Path) -> None:
     pytest.importorskip("fastapi")
     pytest.importorskip("httpx")

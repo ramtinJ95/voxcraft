@@ -188,18 +188,31 @@ class JobStore:
             },
         )
 
-    def mark_failed(self, job_id: str, error: str, *, message: str = "Failed.") -> None:
+    def mark_failed(
+        self,
+        job_id: str,
+        error: str,
+        *,
+        message: str = "Failed.",
+        video_id: str | None = None,
+        workspace_path: str | None = None,
+        log_path: str | None = None,
+    ) -> None:
         now = utc_now()
-        self._update(
-            job_id,
-            {
-                "status": "failed",
-                "updated_at": now,
-                "finished_at": now,
-                "message": message,
-                "error": error,
-            },
-        )
+        updates: dict[str, Any] = {
+            "status": "failed",
+            "updated_at": now,
+            "finished_at": now,
+            "message": message,
+            "error": error,
+        }
+        if video_id is not None:
+            updates["video_id"] = video_id
+        if workspace_path is not None:
+            updates["workspace_path"] = workspace_path
+        if log_path is not None:
+            updates["log_path"] = log_path
+        self._update(job_id, updates)
 
     def mark_interrupted_running_jobs(self) -> int:
         now = utc_now()
