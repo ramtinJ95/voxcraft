@@ -235,7 +235,7 @@ def reconcile_interrupted_jobs(*, store: JobStore, config: PipelineConfig) -> in
     reconciled_count = 0
     for job in store.running_jobs():
         paths = _recover_failure_paths(job=job, config=config)
-        if paths.video_id and paths.workspace_path and paths.final_md_path:
+        if paths.video_id and paths.workspace_path and paths.final_md_path and not job.options.force:
             store.mark_done(
                 job.id,
                 video_id=paths.video_id,
