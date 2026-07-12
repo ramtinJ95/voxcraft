@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import sqlite3
 
 import pytest
 
@@ -43,6 +44,60 @@ def test_job_store_terminal_updates_do_not_overwrite_each_other(tmp_path: Path) 
     assert updated is not None
     assert updated.status == "failed"
     assert updated.error == "interrupted"
+
+
+def test_job_store_fails_active_jobs_with_invalid_legacy_options(tmp_path: Path) -> None:
+    database_path = tmp_path / "jobs.sqlite3"
+    store = JobStore(database_path)
+    store.initialize()
+    job = store.create_job("https://www.youtube.com/watch?v=abc123")
+    with sqlite3.connect(database_path) as connection:
+        connection.execute(
+            "UPDATE jobs SET options_json = ? WHERE id = ?",
+            ('{"min_speakers": 5, "max_speakers": 2}', job.id),
+        )
+
+    store.initialize()
+    updated = store.get_job(job.id)
+
+    assert updated is not None
+    assert updated.status == "failed"
+    assert updated.message == "Invalid stored job options."
+    assert "max_speakers must be >= min_speakers" in (updated.error or "")
+
+
+def test_worker_rejects_diarization_under_changed_whisper_default(monkeypatch, tmp_path: Path) -> None:
+    from voxcraft.config import PipelineConfig
+    from voxcraft.server import JobWorker
+
+    store = JobStore(tmp_path / "jobs.sqlite3")
+    store.initialize()
+    job = store.create_job(
+        "https://www.youtube.com/watch?v=abc123",
+        JobOptions(diarize=True),
+    )
+    running_job = store.claim_next_queued()
+    assert running_job is not None
+    process_called = False
+
+    def fake_process_video(**kwargs):
+        nonlocal process_called
+        process_called = True
+
+    monkeypatch.setattr("voxcraft.server.process_video", fake_process_video)
+    JobWorker(
+        store=store,
+        config=PipelineConfig(
+            base_data_dir=tmp_path / "videos",
+            default_asr_backend="whisper-cpp",
+        ),
+    )._run_job(running_job)
+
+    updated = store.get_job(job.id)
+    assert process_called is False
+    assert updated is not None
+    assert updated.status == "failed"
+    assert updated.error == "diarize is only supported with qwen3-asr"
 
 
 def test_server_requires_token(tmp_path: Path) -> None:

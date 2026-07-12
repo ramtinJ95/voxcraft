@@ -66,6 +66,11 @@ class JobWorker:
     def _run_job(self, job: JobRecord) -> None:
         try:
             options = job.options
+            effective_backend = normalize_asr_backend(
+                options.asr_backend or self.config.default_asr_backend
+            )
+            if options.diarize and effective_backend == "whisper-cpp":
+                raise RuntimeError("diarize is only supported with qwen3-asr")
             if not self.store.update_running(job.id, message="Preparing transcript pipeline."):
                 return
             process_result = process_video(

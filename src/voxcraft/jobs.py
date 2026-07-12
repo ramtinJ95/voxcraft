@@ -92,6 +92,42 @@ class JobStore:
                 )
                 """
             )
+            self._migrate_stored_options(connection)
+
+    def _migrate_stored_options(self, connection: sqlite3.Connection) -> None:
+        rows = connection.execute(
+            "SELECT id, status, options_json FROM jobs"
+        ).fetchall()
+        for row in rows:
+            try:
+                options = JobOptions.model_validate(json.loads(row["options_json"]))
+            except (json.JSONDecodeError, ValueError) as exc:
+                options = JobOptions()
+                if row["status"] in {"queued", "running"}:
+                    now = utc_now()
+                    connection.execute(
+                        """
+                        UPDATE jobs
+                        SET status = 'failed', updated_at = ?, finished_at = ?,
+                            message = ?, error = ?, options_json = ?
+                        WHERE id = ?
+                        """,
+                        (
+                            now,
+                            now,
+                            "Invalid stored job options.",
+                            f"Stored job options are incompatible: {exc}",
+                            options.model_dump_json(),
+                            row["id"],
+                        ),
+                    )
+                    continue
+            canonical = options.model_dump_json()
+            if canonical != row["options_json"]:
+                connection.execute(
+                    "UPDATE jobs SET options_json = ? WHERE id = ?",
+                    (canonical, row["id"]),
+                )
 
     def create_job(self, url: str, options: JobOptions | None = None) -> JobRecord:
         now = utc_now()
