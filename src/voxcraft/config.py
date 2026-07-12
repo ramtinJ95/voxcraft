@@ -141,7 +141,6 @@ class PipelineConfig(BaseModel):
 
     base_data_dir: Path = Path("data/videos")
     language_preference: str = "en"
-    subtitle_first: bool = True
     audio_sample_rate: int = 16000
     audio_channels: int = 1
     default_asr_backend: str = "qwen3-asr"

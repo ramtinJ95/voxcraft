@@ -19,7 +19,7 @@ from voxcraft.config import (
 from voxcraft.download import _download_direct_subtitle, choose_subtitle_candidate, write_metadata_artifacts
 from voxcraft.manifest import build_artifact_paths, initialize_workspace, resolve_video_root
 from voxcraft.models import SourceKind, SubtitleCandidate, TranscriptSegment, TranscriptionDetails, VideoMetadata
-from voxcraft.pipeline import _transcription_details_match, process_video, rechunk_video
+from voxcraft.pipeline import _cached_subtitle_languages, _transcription_details_match, process_video, rechunk_video
 from voxcraft.qwen_cli import apply_mlx_qwen3_asr_patch
 from voxcraft.subtitles import load_segments, write_transcript_artifacts
 from voxcraft.summarize import _build_summary_command, summarize_video, wrap_markdown_text
@@ -60,6 +60,43 @@ def test_choose_subtitle_candidate_can_prefer_explicit_language() -> None:
     assert candidate.language == "es"
 
 
+def test_choose_subtitle_candidate_falls_back_to_any_creator_language() -> None:
+    candidate = choose_subtitle_candidate(
+        subtitles={
+            "sv": [{"ext": "vtt", "url": "https://example.com/sv.vtt"}],
+            "fr": [{"ext": "vtt", "url": "https://example.com/fr.vtt"}],
+        },
+        preferred_language="en",
+    )
+
+    assert candidate is not None
+    assert candidate.language == "fr"
+
+
+def test_choose_subtitle_candidate_skips_languages_without_tracks() -> None:
+    candidate = choose_subtitle_candidate(
+        subtitles={
+            "en": [],
+            "sv": [{"ext": "vtt", "url": "https://example.com/sv.vtt"}],
+        },
+        preferred_language="en",
+    )
+
+    assert candidate is not None
+    assert candidate.language == "sv"
+
+
+def test_cached_subtitle_languages_skips_legacy_empty_tracks() -> None:
+    assert _cached_subtitle_languages(
+        {
+            "subtitles": {
+                "en": [],
+                "sv": [{"ext": "vtt"}],
+            }
+        }
+    ) == {"sv"}
+
+
 def test_choose_subtitle_candidate_ignores_auto_captions_by_default() -> None:
     candidate = choose_subtitle_candidate(
         subtitles={},
@@ -78,6 +115,7 @@ def test_write_metadata_artifacts_keeps_top_level_metadata_compact(tmp_path: Pat
         duration_sec=120.0,
         upload_date="2026-06-11",
         subtitles={
+            "de": [],
             "en": [
                 {
                     "language": "en",
@@ -88,6 +126,7 @@ def test_write_metadata_artifacts_keeps_top_level_metadata_compact(tmp_path: Pat
             ]
         },
         automatic_captions={
+            "fi": [],
             "sv": [
                 {
                     "language": "sv",
@@ -1038,6 +1077,14 @@ def test_load_pipeline_config_reads_json_and_applies_overrides(tmp_path: Path) -
 def test_load_pipeline_config_rejects_unknown_keys(tmp_path: Path) -> None:
     config_path = tmp_path / "config.json"
     write_json(config_path, {"summary_provder": "codex"})
+
+    with pytest.raises(ValueError, match="Extra inputs are not permitted"):
+        load_pipeline_config(config_path=config_path)
+
+
+def test_load_pipeline_config_rejects_removed_subtitle_first_setting(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.json"
+    write_json(config_path, {"subtitle_first": False})
 
     with pytest.raises(ValueError, match="Extra inputs are not permitted"):
         load_pipeline_config(config_path=config_path)
