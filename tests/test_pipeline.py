@@ -455,6 +455,25 @@ def test_rechunk_video_reports_refreshed_chunk_count(tmp_path: Path) -> None:
     assert read_json(paths.summary_payload_path)["chunk_count"] == 3
 
 
+def test_rechunk_video_rejects_missing_summary_payload(tmp_path: Path) -> None:
+    config = PipelineConfig(base_data_dir=tmp_path / "videos")
+    paths = initialize_workspace(
+        build_artifact_paths(config.base_data_dir / "abc123", "abc123")
+    )
+    metadata = VideoMetadata(
+        video_id="abc123",
+        url="https://www.youtube.com/watch?v=abc123",
+    )
+    write_json(paths.metadata_path, metadata.model_dump(mode="json"))
+    write_json(
+        paths.segments_path,
+        [TranscriptSegment(start_sec=0, end_sec=1, text="hello").model_dump(mode="json")],
+    )
+
+    with pytest.raises(RuntimeError, match="rerun process"):
+        rechunk_video("abc123", config)
+
+
 def test_resolve_qwen_command_args_falls_back_to_module_wrapper(monkeypatch) -> None:
     monkeypatch.setattr("voxcraft.transcribe.shutil.which", lambda command: None)
     monkeypatch.setattr("voxcraft.transcribe.sys.executable", "/tmp/python")
