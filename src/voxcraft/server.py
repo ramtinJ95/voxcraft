@@ -227,7 +227,6 @@ def create_app(*, config: PipelineConfig, jobs_db_path: Path, token: str, start_
 class FailurePaths(BaseModel):
     video_id: str | None = None
     workspace_path: str | None = None
-    final_md_path: str | None = None
     log_path: str | None = None
 
 
@@ -235,24 +234,14 @@ def reconcile_interrupted_jobs(*, store: JobStore, config: PipelineConfig) -> in
     reconciled_count = 0
     for job in store.running_jobs():
         paths = _recover_failure_paths(job=job, config=config)
-        if paths.video_id and paths.workspace_path and paths.final_md_path and not job.options.force:
-            store.mark_done(
-                job.id,
-                video_id=paths.video_id,
-                workspace_path=paths.workspace_path,
-                final_md_path=paths.final_md_path,
-                log_path=paths.log_path,
-                message="Recovered completed job after server restart.",
-            )
-        else:
-            store.mark_failed(
-                job.id,
-                "Server restarted while this job was running.",
-                message="Interrupted.",
-                video_id=paths.video_id,
-                workspace_path=paths.workspace_path,
-                log_path=paths.log_path,
-            )
+        store.mark_failed(
+            job.id,
+            "Server restarted while this job was running.",
+            message="Interrupted.",
+            video_id=paths.video_id,
+            workspace_path=paths.workspace_path,
+            log_path=paths.log_path,
+        )
         reconciled_count += 1
     return reconciled_count
 
@@ -276,16 +265,13 @@ def _recover_failure_paths(*, job: JobRecord, config: PipelineConfig) -> Failure
     if root is None:
         return FailurePaths(video_id=video_id)
 
-    final_path = Path(job.final_md_path) if job.final_md_path else root / "final.md"
     log_path = Path(job.log_path) if job.log_path else root / "logs" / "pipeline.log"
     workspace_path = str(root) if root.exists() else None
-    final_md_path = str(final_path) if final_path.exists() else None
     log_path_string = str(log_path) if log_path.exists() else None
 
     return FailurePaths(
         video_id=video_id,
         workspace_path=workspace_path,
-        final_md_path=final_md_path,
         log_path=log_path_string,
     )
 

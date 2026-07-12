@@ -130,7 +130,7 @@ def test_worker_recovers_log_path_when_processing_fails(monkeypatch, tmp_path: P
     assert updated.log_path == str(log_path)
 
 
-def test_reconcile_recovers_completed_running_job_after_restart(tmp_path: Path) -> None:
+def test_reconcile_rejects_stale_final_markdown_after_restart(tmp_path: Path) -> None:
     from voxcraft.config import PipelineConfig
     from voxcraft.server import reconcile_interrupted_jobs
 
@@ -152,43 +152,13 @@ def test_reconcile_recovers_completed_running_job_after_restart(tmp_path: Path) 
 
     assert reconciled_count == 1
     assert updated is not None
-    assert updated.status == "done"
-    assert updated.message == "Recovered completed job after server restart."
-    assert updated.video_id == "abc123"
-    assert updated.workspace_path == str(workspace)
-    assert updated.final_md_path == str(final_path)
-    assert updated.log_path == str(log_path)
-
-
-def test_reconcile_does_not_recover_force_rerun_from_stale_final_markdown(tmp_path: Path) -> None:
-    from voxcraft.config import PipelineConfig
-    from voxcraft.server import reconcile_interrupted_jobs
-
-    config = PipelineConfig(base_data_dir=tmp_path / "videos")
-    store = JobStore(tmp_path / "jobs.sqlite3")
-    store.initialize()
-    job = store.create_job("https://www.youtube.com/watch?v=abc123", JobOptions(force=True))
-    assert store.claim_next_queued() is not None
-    workspace = tmp_path / "videos" / "demo--abc123"
-    final_path = workspace / "final.md"
-    log_path = workspace / "logs" / "pipeline.log"
-    final_path.parent.mkdir(parents=True)
-    log_path.parent.mkdir(parents=True)
-    final_path.write_text("# Stale Final Summary\n", encoding="utf-8")
-    log_path.write_text("interrupted force rerun\n", encoding="utf-8")
-
-    reconciled_count = reconcile_interrupted_jobs(store=store, config=config)
-    updated = store.get_job(job.id)
-
-    assert reconciled_count == 1
-    assert updated is not None
     assert updated.status == "failed"
     assert updated.message == "Interrupted."
     assert updated.error == "Server restarted while this job was running."
     assert updated.video_id == "abc123"
     assert updated.workspace_path == str(workspace)
-    assert updated.log_path == str(log_path)
     assert updated.final_md_path is None
+    assert updated.log_path == str(log_path)
 
 
 def test_reconcile_preserves_log_path_for_interrupted_job(tmp_path: Path) -> None:
@@ -243,10 +213,12 @@ def test_reconcile_uses_recorded_workspace_metadata_when_url_id_is_unavailable(t
 
     assert reconciled_count == 1
     assert updated is not None
-    assert updated.status == "done"
+    assert updated.status == "failed"
+    assert updated.message == "Interrupted."
+    assert updated.error == "Server restarted while this job was running."
     assert updated.video_id == "abc123"
     assert updated.workspace_path == str(workspace)
-    assert updated.final_md_path == str(final_path)
+    assert updated.final_md_path is None
     assert updated.log_path == str(log_path)
 
 
