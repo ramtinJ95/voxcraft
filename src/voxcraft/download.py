@@ -50,7 +50,7 @@ def build_subtitle_download_options(
     }
 
 
-def build_audio_download_options(source_dir: Path) -> dict[str, Any]:
+def build_audio_download_options(source_dir: Path, *, force: bool = False) -> dict[str, Any]:
     return {
         "quiet": True,
         "no_warnings": True,
@@ -58,6 +58,7 @@ def build_audio_download_options(source_dir: Path) -> dict[str, Any]:
         "paths": {"home": str(source_dir)},
         "outtmpl": {"default": "audio.%(ext)s"},
         "noplaylist": True,
+        "overwrites": force,
     }
 
 
@@ -217,7 +218,7 @@ def download_audio_file(
 
     for attempt in range(2):
         try:
-            with YoutubeDL(build_audio_download_options(source_dir)) as ydl:
+            with YoutubeDL(build_audio_download_options(source_dir, force=force)) as ydl:
                 info = ydl.extract_info(url, download=True)
                 path = _extract_requested_filepath(info)
             break
@@ -298,7 +299,12 @@ def _find_audio_file(source_dir: Path) -> Path | None:
     candidates = sorted(
         path
         for path in source_dir.glob("audio.*")
-        if path.is_file() and path.suffix.lower() not in {".part", ".ytdl", ".wav"}
+        if path.is_file()
+        and path.suffix.lower() != ".wav"
+        and not any(
+            marker in path.name.lower()
+            for marker in (".part", ".ytdl", ".temp", ".frag")
+        )
     )
     return candidates[0] if candidates else None
 
