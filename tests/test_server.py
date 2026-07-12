@@ -147,6 +147,7 @@ def test_server_creates_queued_job(tmp_path: Path) -> None:
     assert payload["job"]["url"] == "https://www.youtube.com/watch?v=abc123"
     assert payload["job"]["status"] == "queued"
     assert payload["job"]["options"]["language"] == "en"
+    assert payload["job"]["options"]["asr_backend"] == "qwen3-asr"
     assert payload["log_url"].endswith("/log")
 
 

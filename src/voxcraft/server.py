@@ -164,7 +164,12 @@ def create_app(*, config: PipelineConfig, jobs_db_path: Path, token: str, start_
     @app.post("/jobs", dependencies=[auth_dependency], response_model=JobResponse, status_code=202)
     def create_job(request: CreateJobRequest, response: Response) -> JobResponse:
         _validate_request_against_config(request, config=config)
-        job = store.create_job(url=request.url, options=request.to_job_options())
+        options = request.to_job_options()
+        if options.asr_backend is None:
+            options = options.model_copy(
+                update={"asr_backend": normalize_asr_backend(config.default_asr_backend)}
+            )
+        job = store.create_job(url=request.url, options=options)
         response.headers["Location"] = f"/jobs/{job.id}"
         return _job_response(job)
 
