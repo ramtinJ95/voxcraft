@@ -16,7 +16,6 @@ class SubtitleCandidate(BaseModel):
     ext: str = "vtt"
     url: str | None = None
     name: str | None = None
-    is_automatic: bool = False
 
 
 class VideoMetadata(BaseModel):
