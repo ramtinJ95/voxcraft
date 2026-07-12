@@ -1446,7 +1446,9 @@ def test_summarize_video_writes_chunk_and_final_outputs(monkeypatch, tmp_path: P
     assert manifest["summary_model"] == "gpt-5.5"
     assert manifest["summary_thinking_level"] == "high"
     assert manifest["prompt_version"] == 1
+    assert manifest["chunk_summaries"][0]["prompt_sha256"]
     assert manifest["chunk_summaries"][0]["output_sha256"]
+    assert manifest["final_prompt_sha256"]
     assert manifest["final_summary_sha256"]
     assert all(len(line) <= 80 for line in paths.summary_final_path.read_text(encoding="utf-8").splitlines())
 
@@ -1462,6 +1464,12 @@ def test_summarize_video_writes_chunk_and_final_outputs(monkeypatch, tmp_path: P
     write_text(paths.summary_final_path, "truncated\n")
     summarize_video(video_id="video123", config=PipelineConfig(base_data_dir=tmp_path))
     assert len(captured_summary_calls) == 1
+
+    captured_summary_calls.clear()
+    changed_metadata = metadata.model_copy(update={"title": "Changed title"})
+    write_json(paths.metadata_path, changed_metadata.model_dump(mode="json"))
+    summarize_video(video_id="video123", config=PipelineConfig(base_data_dir=tmp_path))
+    assert len(captured_summary_calls) == 2
 
 
 def test_summarize_video_reruns_when_summary_settings_change(monkeypatch, tmp_path: Path) -> None:

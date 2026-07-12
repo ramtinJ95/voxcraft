@@ -126,6 +126,7 @@ class ChunkSummaryEntry(BaseModel):
     end_sec: float
     source_chunk_path: str
     source_chunk_sha256: str | None = None
+    prompt_sha256: str | None = None
     output_sha256: str | None = None
     prompt_path: str
     output_path: str
@@ -140,5 +141,6 @@ class SummaryManifest(BaseModel):
     summary_thinking_level: str | None = None
     chunk_summaries: list[ChunkSummaryEntry] = Field(default_factory=list)
     final_prompt_path: str
+    final_prompt_sha256: str | None = None
     final_summary_path: str
     final_summary_sha256: str | None = None

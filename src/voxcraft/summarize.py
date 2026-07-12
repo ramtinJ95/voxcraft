@@ -53,40 +53,13 @@ def summarize_video(
         model=summary_model,
         thinking_level=summary_thinking_level,
     )
-    final_output_reusable = (
+    final_output_intact = (
         manifest is not None
         and manifest.final_summary_sha256 is not None
         and paths.summary_final_path.exists()
         and manifest.final_summary_sha256
         == _content_sha256(paths.summary_final_path.read_text(encoding="utf-8"))
     )
-    if manifest is not None and not force and paths.summary_final_path.exists():
-        if (
-            settings_match
-            and final_output_reusable
-            and len(manifest.chunk_summaries) == len(chunk_manifest)
-            and all(
-                _chunk_summary_matches_input(
-                    entry=entry,
-                    chunk=chunk,
-                    chunk_sha256=_chunk_file_sha256(paths.root_dir / chunk.path),
-                    root_dir=paths.root_dir,
-                )
-                for entry, chunk in zip(manifest.chunk_summaries, chunk_manifest, strict=True)
-            )
-        ):
-            wrap_markdown_file(paths.summary_final_path, width=FINAL_SUMMARY_WRAP_WIDTH)
-            summary_payload = SummaryPayload.model_validate(read_json(paths.summary_payload_path))
-            return ProcessResult(
-                metadata=metadata,
-                source_kind=summary_payload.source_kind,
-                artifact_root=paths.root_dir,
-                chunk_count=len(chunk_manifest),
-                notes=["Reused cached summaries."],
-                summary_manifest_path=path_string(paths.summary_manifest_path, paths.root_dir),
-                final_summary_path=path_string(paths.summary_final_path, paths.root_dir),
-            )
-
     provider_label = _summary_provider_label(summary_provider)
     append_log(paths.pipeline_log_path, f"Starting {provider_label} summarization for {video_id}")
     summary_entries: list[ChunkSummaryEntry] = []
@@ -101,6 +74,7 @@ def summarize_video(
         prompt_path = paths.summary_prompts_dir / f"chunk-{chunk.index:03}.prompt.txt"
         output_path = paths.summary_dir / f"chunk-{chunk.index:03}.md"
         prompt = build_chunk_summary_prompt(metadata=metadata, chunk=chunk, chunk_text=chunk_text)
+        prompt_sha256 = _content_sha256(prompt)
         write_text(prompt_path, prompt)
         existing_entry = existing_chunk_summaries.get(chunk.index)
         chunk_output_reusable = (
@@ -110,6 +84,7 @@ def summarize_video(
                 entry=existing_entry,
                 chunk=chunk,
                 chunk_sha256=chunk_sha256,
+                prompt_sha256=prompt_sha256,
                 root_dir=paths.root_dir,
             )
             and output_path == paths.root_dir / existing_entry.output_path
@@ -138,6 +113,7 @@ def summarize_video(
                 end_sec=chunk.end_sec,
                 source_chunk_path=chunk.path,
                 source_chunk_sha256=chunk_sha256,
+                prompt_sha256=prompt_sha256,
                 output_sha256=_content_sha256(rendered),
                 prompt_path=path_string(prompt_path, paths.root_dir),
                 output_path=path_string(output_path, paths.root_dir),
@@ -149,8 +125,16 @@ def summarize_video(
         chunk_summaries=rendered_chunk_summaries,
         chunk_manifest=chunk_manifest,
     )
+    final_prompt_sha256 = _content_sha256(final_prompt)
     write_text(paths.summary_final_prompt_path, final_prompt)
-    if force or not settings_match or not reused_all_chunk_summaries or not final_output_reusable:
+    final_output_reusable = (
+        settings_match
+        and reused_all_chunk_summaries
+        and final_output_intact
+        and manifest is not None
+        and manifest.final_prompt_sha256 == final_prompt_sha256
+    )
+    if force or not final_output_reusable:
         run_summary_cli(
             prompt=final_prompt,
             output_path=paths.summary_final_path,
@@ -172,6 +156,7 @@ def summarize_video(
         summary_thinking_level=summary_thinking_level,
         chunk_summaries=summary_entries,
         final_prompt_path=path_string(paths.summary_final_prompt_path, paths.root_dir),
+        final_prompt_sha256=final_prompt_sha256,
         final_summary_path=path_string(paths.summary_final_path, paths.root_dir),
         final_summary_sha256=_content_sha256(
             paths.summary_final_path.read_text(encoding="utf-8")
@@ -442,11 +427,14 @@ def _chunk_summary_matches_input(
     entry: ChunkSummaryEntry,
     chunk: ChunkManifestEntry,
     chunk_sha256: str,
+    prompt_sha256: str,
     root_dir: Path,
 ) -> bool:
     if entry.index != chunk.index or entry.source_chunk_path != chunk.path:
         return False
     if entry.source_chunk_sha256 != chunk_sha256:
+        return False
+    if entry.prompt_sha256 != prompt_sha256:
         return False
     output_path = root_dir / entry.output_path
     if entry.output_sha256 is None or not output_path.exists():
@@ -454,10 +442,6 @@ def _chunk_summary_matches_input(
     return entry.output_sha256 == _content_sha256(
         output_path.read_text(encoding="utf-8").strip()
     )
-
-
-def _chunk_file_sha256(path: Path) -> str:
-    return _content_sha256(path.read_text(encoding="utf-8").strip())
 
 
 def _content_sha256(content: str) -> str:
