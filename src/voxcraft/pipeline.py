@@ -421,7 +421,11 @@ def _cached_subtitle_languages(metadata_payload: dict[str, object]) -> set[str]:
 
     raw_subtitles = metadata_payload.get("subtitles")
     if isinstance(raw_subtitles, dict):
-        return {str(language).lower() for language in raw_subtitles}
+        return {
+            str(language).lower()
+            for language, tracks in raw_subtitles.items()
+            if isinstance(tracks, list) and tracks
+        }
 
     return set()
 
