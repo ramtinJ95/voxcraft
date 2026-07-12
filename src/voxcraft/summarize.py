@@ -20,6 +20,7 @@ from .models import (
 from .utils import append_log, path_string, read_json, write_json, write_text
 
 FINAL_SUMMARY_WRAP_WIDTH = 80
+SUMMARY_PROMPT_VERSION = 1
 SUMMARY_STDIN_DIRECTIVE = "Follow the piped prompt exactly and output only the requested markdown. Do not use tools."
 FENCE_PATTERN = re.compile(r"^\s*(```|~~~)")
 LIST_ITEM_PATTERN = re.compile(r"^(\s*)([-*+]|\d+\.)\s+(.*)$")
@@ -129,6 +130,7 @@ def summarize_video(
                 end_sec=chunk.end_sec,
                 source_chunk_path=chunk.path,
                 source_chunk_sha256=chunk_sha256,
+                output_sha256=_content_sha256(rendered),
                 prompt_path=path_string(prompt_path, paths.root_dir),
                 output_path=path_string(output_path, paths.root_dir),
             )
@@ -154,6 +156,7 @@ def summarize_video(
 
     summary_manifest = SummaryManifest(
         video_id=video_id,
+        prompt_version=SUMMARY_PROMPT_VERSION,
         summary_provider=summary_provider,
         summary_command=summary_command,
         summary_model=summary_model,
@@ -415,7 +418,8 @@ def _summary_settings_match(
     if manifest is None:
         return False
     return (
-        manifest.summary_provider == provider
+        manifest.prompt_version == SUMMARY_PROMPT_VERSION
+        and manifest.summary_provider == provider
         and manifest.summary_command == command
         and manifest.summary_model == model
         and manifest.summary_thinking_level == thinking_level
@@ -433,7 +437,12 @@ def _chunk_summary_matches_input(
         return False
     if entry.source_chunk_sha256 != chunk_sha256:
         return False
-    return (root_dir / entry.output_path).exists()
+    output_path = root_dir / entry.output_path
+    if entry.output_sha256 is None or not output_path.exists():
+        return False
+    return entry.output_sha256 == _content_sha256(
+        output_path.read_text(encoding="utf-8").strip()
+    )
 
 
 def _chunk_file_sha256(path: Path) -> str:

@@ -126,12 +126,14 @@ class ChunkSummaryEntry(BaseModel):
     end_sec: float
     source_chunk_path: str
     source_chunk_sha256: str | None = None
+    output_sha256: str | None = None
     prompt_path: str
     output_path: str
 
 
 class SummaryManifest(BaseModel):
     video_id: str
+    prompt_version: int = 0
     summary_provider: str = "codex"
     summary_command: str
     summary_model: str | None = None
