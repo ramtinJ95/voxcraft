@@ -95,7 +95,11 @@ def choose_subtitle_language(
     preferred_language: str = "en",
     prefer_english: bool = True,
 ) -> str | None:
-    available_languages = subtitles.keys() if isinstance(subtitles, dict) else subtitles
+    available_languages = (
+        (language for language, tracks in subtitles.items() if tracks)
+        if isinstance(subtitles, dict)
+        else subtitles
+    )
     normalized_languages = {
         language.lower(): language
         for language in sorted(available_languages)
@@ -253,8 +257,12 @@ def _metadata_artifact_payload(metadata: VideoMetadata) -> dict[str, Any]:
             "automatic_captions",
         },
     )
-    payload["subtitle_languages"] = sorted(metadata.subtitles)
-    payload["automatic_caption_languages"] = sorted(metadata.automatic_captions)
+    payload["subtitle_languages"] = sorted(
+        language for language, tracks in metadata.subtitles.items() if tracks
+    )
+    payload["automatic_caption_languages"] = sorted(
+        language for language, tracks in metadata.automatic_captions.items() if tracks
+    )
     return payload
 
 
