@@ -1447,6 +1447,7 @@ def test_summarize_video_writes_chunk_and_final_outputs(monkeypatch, tmp_path: P
     assert manifest["summary_thinking_level"] == "high"
     assert manifest["prompt_version"] == 1
     assert manifest["chunk_summaries"][0]["output_sha256"]
+    assert manifest["final_summary_sha256"]
     assert all(len(line) <= 80 for line in paths.summary_final_path.read_text(encoding="utf-8").splitlines())
 
     captured_summary_calls.clear()
@@ -1456,6 +1457,11 @@ def test_summarize_video_writes_chunk_and_final_outputs(monkeypatch, tmp_path: P
     write_text(paths.summary_dir / "chunk-001.md", "corrupted summary\n")
     summarize_video(video_id="video123", config=PipelineConfig(base_data_dir=tmp_path))
     assert len(captured_summary_calls) == 2
+
+    captured_summary_calls.clear()
+    write_text(paths.summary_final_path, "truncated\n")
+    summarize_video(video_id="video123", config=PipelineConfig(base_data_dir=tmp_path))
+    assert len(captured_summary_calls) == 1
 
 
 def test_summarize_video_reruns_when_summary_settings_change(monkeypatch, tmp_path: Path) -> None:

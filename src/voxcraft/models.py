@@ -141,3 +141,4 @@ class SummaryManifest(BaseModel):
     chunk_summaries: list[ChunkSummaryEntry] = Field(default_factory=list)
     final_prompt_path: str
     final_summary_path: str
+    final_summary_sha256: str | None = None

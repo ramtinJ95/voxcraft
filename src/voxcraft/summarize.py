@@ -53,9 +53,17 @@ def summarize_video(
         model=summary_model,
         thinking_level=summary_thinking_level,
     )
+    final_output_reusable = (
+        manifest is not None
+        and manifest.final_summary_sha256 is not None
+        and paths.summary_final_path.exists()
+        and manifest.final_summary_sha256
+        == _content_sha256(paths.summary_final_path.read_text(encoding="utf-8"))
+    )
     if manifest is not None and not force and paths.summary_final_path.exists():
         if (
             settings_match
+            and final_output_reusable
             and len(manifest.chunk_summaries) == len(chunk_manifest)
             and all(
                 _chunk_summary_matches_input(
@@ -142,7 +150,7 @@ def summarize_video(
         chunk_manifest=chunk_manifest,
     )
     write_text(paths.summary_final_prompt_path, final_prompt)
-    if force or not settings_match or not reused_all_chunk_summaries or not paths.summary_final_path.exists():
+    if force or not settings_match or not reused_all_chunk_summaries or not final_output_reusable:
         run_summary_cli(
             prompt=final_prompt,
             output_path=paths.summary_final_path,
@@ -154,6 +162,7 @@ def summarize_video(
         )
         append_log(paths.pipeline_log_path, f"Wrote final {provider_label} summary")
 
+    wrap_markdown_file(paths.summary_final_path, width=FINAL_SUMMARY_WRAP_WIDTH)
     summary_manifest = SummaryManifest(
         video_id=video_id,
         prompt_version=SUMMARY_PROMPT_VERSION,
@@ -164,9 +173,11 @@ def summarize_video(
         chunk_summaries=summary_entries,
         final_prompt_path=path_string(paths.summary_final_prompt_path, paths.root_dir),
         final_summary_path=path_string(paths.summary_final_path, paths.root_dir),
+        final_summary_sha256=_content_sha256(
+            paths.summary_final_path.read_text(encoding="utf-8")
+        ),
     )
     write_json(paths.summary_manifest_path, summary_manifest.model_dump(mode="json"))
-    wrap_markdown_file(paths.summary_final_path, width=FINAL_SUMMARY_WRAP_WIDTH)
 
     summary_payload = SummaryPayload.model_validate(read_json(paths.summary_payload_path))
     return ProcessResult(
