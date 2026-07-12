@@ -8,7 +8,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
+
+from .config import normalize_asr_backend
 
 JobStatus = Literal["queued", "running", "done", "failed"]
 
@@ -32,6 +34,16 @@ class JobOptions(BaseModel):
     num_speakers: int | None = Field(default=None, ge=1)
     min_speakers: int = Field(default=1, ge=1)
     max_speakers: int = Field(default=8, ge=1)
+
+    @model_validator(mode="after")
+    def validate_options(self) -> JobOptions:
+        if self.max_speakers < self.min_speakers:
+            raise ValueError("max_speakers must be >= min_speakers")
+        if self.asr_backend is not None:
+            self.asr_backend = normalize_asr_backend(self.asr_backend)
+            if self.asr_backend == "whisper-cpp" and self.diarize:
+                raise ValueError("diarize is only supported with qwen3-asr")
+        return self
 
 
 class JobRecord(BaseModel):
@@ -80,6 +92,42 @@ class JobStore:
                 )
                 """
             )
+            self._migrate_stored_options(connection)
+
+    def _migrate_stored_options(self, connection: sqlite3.Connection) -> None:
+        rows = connection.execute(
+            "SELECT id, status, options_json FROM jobs"
+        ).fetchall()
+        for row in rows:
+            try:
+                options = JobOptions.model_validate(json.loads(row["options_json"]))
+            except (json.JSONDecodeError, ValueError) as exc:
+                options = JobOptions()
+                if row["status"] in {"queued", "running"}:
+                    now = utc_now()
+                    connection.execute(
+                        """
+                        UPDATE jobs
+                        SET status = 'failed', updated_at = ?, finished_at = ?,
+                            message = ?, error = ?, options_json = ?
+                        WHERE id = ?
+                        """,
+                        (
+                            now,
+                            now,
+                            "Invalid stored job options.",
+                            f"Stored job options are incompatible: {exc}",
+                            options.model_dump_json(),
+                            row["id"],
+                        ),
+                    )
+                    continue
+            canonical = options.model_dump_json()
+            if canonical != row["options_json"]:
+                connection.execute(
+                    "UPDATE jobs SET options_json = ? WHERE id = ?",
+                    (canonical, row["id"]),
+                )
 
     def create_job(self, url: str, options: JobOptions | None = None) -> JobRecord:
         now = utc_now()
