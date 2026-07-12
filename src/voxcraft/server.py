@@ -138,7 +138,8 @@ class JobWorker:
                 log_path=str(summary_result.artifact_root / "logs" / "pipeline.log"),
             )
         except Exception as exc:
-            recovered_paths = _recover_failure_paths(job=job, config=self.config)
+            current_job = self.store.get_job(job.id) or job
+            recovered_paths = _recover_failure_paths(job=current_job, config=self.config)
             self.store.mark_failed(
                 job.id,
                 str(exc),
@@ -234,7 +235,7 @@ def reconcile_interrupted_jobs(*, store: JobStore, config: PipelineConfig) -> in
     reconciled_count = 0
     for job in store.running_jobs():
         paths = _recover_failure_paths(job=job, config=config)
-        store.mark_failed(
+        transitioned = store.mark_failed(
             job.id,
             "Server restarted while this job was running.",
             message="Interrupted.",
@@ -242,7 +243,8 @@ def reconcile_interrupted_jobs(*, store: JobStore, config: PipelineConfig) -> in
             workspace_path=paths.workspace_path,
             log_path=paths.log_path,
         )
-        reconciled_count += 1
+        if transitioned:
+            reconciled_count += 1
     return reconciled_count
 
 
