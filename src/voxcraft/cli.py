@@ -28,7 +28,7 @@ from .client import (
     VoxcraftServerClient,
 )
 from .jobs import JobOptions
-from .pipeline import prepare_summary_input, process_video, rechunk_video
+from .pipeline import process_video, rechunk_video
 from .summarize import summarize_video
 from .transcribe import describe_qwen_command
 from .utils import write_text
@@ -458,20 +458,6 @@ def rechunk(
     config, _ = _load_runtime_config(ctx, overrides=overrides)
     result = rechunk_video(video_id=video_id, config=config)
     console.print(f"Rechunked {result.metadata.video_id} into {result.chunk_count} chunks at {result.artifact_root}.")
-
-
-@app.command("prepare-summary")
-def prepare_summary(
-    ctx: typer.Context,
-    video_id: str,
-    data_dir: Path | None = typer.Option(None, help="Override the artifact root directory for this run."),
-) -> None:
-    overrides = {"base_data_dir": data_dir} if data_dir is not None else None
-    config, _ = _load_runtime_config(ctx, overrides=overrides)
-    result = prepare_summary_input(video_id=video_id, config=config)
-    console.print(
-        f"Prepared summary payload for {result.metadata.video_id} with {result.chunk_count} chunks at {result.artifact_root}."
-    )
 
 
 @app.command()

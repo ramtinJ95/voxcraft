@@ -52,8 +52,6 @@ Use `summarize <video_id>` when transcript artifacts already exist and only the 
 
 Use `rechunk <video_id>` when chunk boundaries need regeneration from existing transcript segments.
 
-Use `prepare-summary <video_id>` when summary payload artifacts need regeneration from an existing transcript.
-
 Use `submit-job "<url>"` when the user wants the Mac mini/server workflow. It requires `VOXCRAFT_SERVER_URL` and `VOXCRAFT_SERVER_TOKEN` in the environment unless passed as flags.
 
 Use `check-job <job_id>` to poll a previously submitted server job. Use `fetch-final <job_id>` only when you need the raw completed `final.md` markdown.

@@ -277,18 +277,6 @@ def rechunk_video(
     )
 
 
-def prepare_summary_input(
-    video_id: str,
-    config: PipelineConfig,
-) -> ProcessResult:
-    return _rebuild_summary_artifacts_from_segments(
-        video_id=video_id,
-        config=config,
-        fallback_note="Summary payload regenerated from existing segments.",
-        log_message="Prepared summary payload with",
-    )
-
-
 def _rebuild_summary_artifacts_from_segments(
     *,
     video_id: str,

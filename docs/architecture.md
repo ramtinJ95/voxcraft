@@ -69,7 +69,6 @@ Defines the public commands:
 - `process`
 - `summarize`
 - `rechunk`
-- `prepare-summary`
 
 It also exposes a global `--config` option so commands can load a runtime `config.json`
 before applying any per-run overrides.
