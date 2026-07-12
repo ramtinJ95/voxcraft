@@ -96,7 +96,8 @@ class JobWorker:
     def _run_job(self, job: JobRecord) -> None:
         try:
             options = job.options
-            self.store.update_running(job.id, message="Preparing transcript pipeline.")
+            if not self.store.update_running(job.id, message="Preparing transcript pipeline."):
+                return
             process_result = process_video(
                 url=job.url,
                 config=self.config,
@@ -112,13 +113,14 @@ class JobWorker:
             )
             workspace_path = str(process_result.artifact_root)
             log_path = str(process_result.artifact_root / "logs" / "pipeline.log")
-            self.store.update_running(
+            if not self.store.update_running(
                 job.id,
                 message="Summarizing transcript.",
                 video_id=process_result.metadata.video_id,
                 workspace_path=workspace_path,
                 log_path=log_path,
-            )
+            ):
+                return
             summary_result = summarize_video(
                 video_id=process_result.metadata.video_id,
                 config=self.config,
@@ -130,15 +132,17 @@ class JobWorker:
             )
             if final_md_path is None or not final_md_path.exists():
                 raise RuntimeError("Summarization completed without a final.md path.")
-            self.store.mark_done(
+            if not self.store.mark_done(
                 job.id,
                 video_id=summary_result.metadata.video_id,
                 workspace_path=str(summary_result.artifact_root),
                 final_md_path=str(final_md_path),
                 log_path=str(summary_result.artifact_root / "logs" / "pipeline.log"),
-            )
+            ):
+                return
         except Exception as exc:
-            recovered_paths = _recover_failure_paths(job=job, config=self.config)
+            current_job = self.store.get_job(job.id) or job
+            recovered_paths = _recover_failure_paths(job=current_job, config=self.config)
             self.store.mark_failed(
                 job.id,
                 str(exc),
@@ -227,7 +231,6 @@ def create_app(*, config: PipelineConfig, jobs_db_path: Path, token: str, start_
 class FailurePaths(BaseModel):
     video_id: str | None = None
     workspace_path: str | None = None
-    final_md_path: str | None = None
     log_path: str | None = None
 
 
@@ -235,25 +238,16 @@ def reconcile_interrupted_jobs(*, store: JobStore, config: PipelineConfig) -> in
     reconciled_count = 0
     for job in store.running_jobs():
         paths = _recover_failure_paths(job=job, config=config)
-        if paths.video_id and paths.workspace_path and paths.final_md_path and not job.options.force:
-            store.mark_done(
-                job.id,
-                video_id=paths.video_id,
-                workspace_path=paths.workspace_path,
-                final_md_path=paths.final_md_path,
-                log_path=paths.log_path,
-                message="Recovered completed job after server restart.",
-            )
-        else:
-            store.mark_failed(
-                job.id,
-                "Server restarted while this job was running.",
-                message="Interrupted.",
-                video_id=paths.video_id,
-                workspace_path=paths.workspace_path,
-                log_path=paths.log_path,
-            )
-        reconciled_count += 1
+        transitioned = store.mark_failed(
+            job.id,
+            "Server restarted while this job was running.",
+            message="Interrupted.",
+            video_id=paths.video_id,
+            workspace_path=paths.workspace_path,
+            log_path=paths.log_path,
+        )
+        if transitioned:
+            reconciled_count += 1
     return reconciled_count
 
 
@@ -276,16 +270,13 @@ def _recover_failure_paths(*, job: JobRecord, config: PipelineConfig) -> Failure
     if root is None:
         return FailurePaths(video_id=video_id)
 
-    final_path = Path(job.final_md_path) if job.final_md_path else root / "final.md"
     log_path = Path(job.log_path) if job.log_path else root / "logs" / "pipeline.log"
     workspace_path = str(root) if root.exists() else None
-    final_md_path = str(final_path) if final_path.exists() else None
     log_path_string = str(log_path) if log_path.exists() else None
 
     return FailurePaths(
         video_id=video_id,
         workspace_path=workspace_path,
-        final_md_path=final_md_path,
         log_path=log_path_string,
     )
 

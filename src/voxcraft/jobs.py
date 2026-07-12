@@ -156,7 +156,7 @@ class JobStore:
         workspace_path: str | None = None,
         final_md_path: str | None = None,
         log_path: str | None = None,
-    ) -> None:
+    ) -> bool:
         updates: dict[str, Any] = {"updated_at": utc_now()}
         if message is not None:
             updates["message"] = message
@@ -168,7 +168,7 @@ class JobStore:
             updates["final_md_path"] = final_md_path
         if log_path is not None:
             updates["log_path"] = log_path
-        self._update(job_id, updates)
+        return self._update(job_id, updates, expected_status="running")
 
     def mark_done(
         self,
@@ -179,9 +179,9 @@ class JobStore:
         final_md_path: str,
         log_path: str | None,
         message: str = "Done.",
-    ) -> None:
+    ) -> bool:
         now = utc_now()
-        self._update(
+        return self._update(
             job_id,
             {
                 "status": "done",
@@ -194,6 +194,7 @@ class JobStore:
                 "message": message,
                 "error": None,
             },
+            expected_status="running",
         )
 
     def mark_failed(
@@ -205,7 +206,7 @@ class JobStore:
         video_id: str | None = None,
         workspace_path: str | None = None,
         log_path: str | None = None,
-    ) -> None:
+    ) -> bool:
         now = utc_now()
         updates: dict[str, Any] = {
             "status": "failed",
@@ -220,15 +221,30 @@ class JobStore:
             updates["workspace_path"] = workspace_path
         if log_path is not None:
             updates["log_path"] = log_path
-        self._update(job_id, updates)
+        return self._update(job_id, updates, expected_status="running")
 
-    def _update(self, job_id: str, updates: dict[str, Any]) -> None:
+    def _update(
+        self,
+        job_id: str,
+        updates: dict[str, Any],
+        *,
+        expected_status: JobStatus | None = None,
+    ) -> bool:
         if not updates:
-            return
+            return False
         assignments = ", ".join(f"{column} = ?" for column in updates)
         values = [updates[column] for column in updates]
+        where = "id = ?"
+        parameters: list[Any] = [*values, job_id]
+        if expected_status is not None:
+            where += " AND status = ?"
+            parameters.append(expected_status)
         with self._locked_connection() as connection:
-            connection.execute(f"UPDATE jobs SET {assignments} WHERE id = ?", [*values, job_id])
+            cursor = connection.execute(
+                f"UPDATE jobs SET {assignments} WHERE {where}",
+                parameters,
+            )
+        return cursor.rowcount == 1
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.path, timeout=30, isolation_level=None)
