@@ -165,53 +165,57 @@ class PipelineConfig(BaseModel):
     whisper_cpp_threads: int = Field(default_factory=_default_whisper_cpp_threads)
     summary_provider: str = DEFAULT_SUMMARY_PROVIDER
     summary_profiles: dict[str, SummaryHarnessConfig] = Field(default_factory=_default_summary_profiles)
-    summary_command: str | None = None
-    summary_model: str | None = None
-    summary_thinking_level: str | None = None
-    codex_command: str | None = None
-    codex_summary_model: str | None = None
-    codex_summary_thinking_level: str | None = None
 
     @model_validator(mode="after")
     def _hydrate_summary_settings(self) -> PipelineConfig:
         self.default_asr_backend = normalize_asr_backend(self.default_asr_backend)
-        provider = normalize_summary_provider(self.summary_provider)
-        profiles = _normalize_summary_profiles(self.summary_profiles)
-        codex_updates: dict[str, str] = {}
-        if self.codex_command:
-            codex_updates["command"] = self.codex_command
-        if self.codex_summary_model is not None:
-            codex_updates["model"] = self.codex_summary_model
-        if self.codex_summary_thinking_level is not None:
-            codex_updates["thinking_level"] = self.codex_summary_thinking_level
-        if codex_updates:
-            profiles["codex"] = profiles["codex"].model_copy(update=codex_updates)
-
-        selected_profile = profiles[provider]
-        selected_updates: dict[str, str] = {}
-        if self.summary_command is not None:
-            selected_updates["command"] = self.summary_command
-        if self.summary_model is not None:
-            selected_updates["model"] = self.summary_model
-        if self.summary_thinking_level is not None:
-            selected_updates["thinking_level"] = self.summary_thinking_level
-        if selected_updates:
-            selected_profile = selected_profile.model_copy(update=selected_updates)
-            profiles[provider] = selected_profile
-
-        self.summary_provider = provider
-        self.summary_profiles = profiles
-        self.summary_command = selected_profile.command
-        self.summary_model = selected_profile.model
-        self.summary_thinking_level = selected_profile.thinking_level
-        self.codex_command = profiles["codex"].command
-        self.codex_summary_model = profiles["codex"].model
-        self.codex_summary_thinking_level = profiles["codex"].thinking_level
+        self.summary_provider = normalize_summary_provider(self.summary_provider)
+        self.summary_profiles = _normalize_summary_profiles(self.summary_profiles)
         return self
 
     def summary_harness(self, provider: str | None = None) -> SummaryHarnessConfig:
         resolved_provider = normalize_summary_provider(provider or self.summary_provider)
         return self.summary_profiles[resolved_provider]
+
+    def with_summary_overrides(
+        self,
+        *,
+        provider: str | None = None,
+        command: str | None = None,
+        model: str | None = None,
+        thinking_level: str | None = None,
+    ) -> PipelineConfig:
+        resolved_provider = normalize_summary_provider(provider or self.summary_provider)
+        profiles = dict(self.summary_profiles)
+        updates = {
+            key: value
+            for key, value in {
+                "command": command,
+                "model": model,
+                "thinking_level": thinking_level,
+            }.items()
+            if value is not None
+        }
+        if updates:
+            profiles[resolved_provider] = profiles[resolved_provider].model_copy(update=updates)
+        return self.model_copy(
+            update={
+                "summary_provider": resolved_provider,
+                "summary_profiles": profiles,
+            }
+        )
+
+    @property
+    def summary_command(self) -> str | None:
+        return self.summary_harness().command
+
+    @property
+    def summary_model(self) -> str | None:
+        return self.summary_harness().model
+
+    @property
+    def summary_thinking_level(self) -> str | None:
+        return self.summary_harness().thinking_level
 
     def video_root(self, video_id: str, title: str | None = None, upload_date: str | None = None) -> Path:
         return resolve_video_root(self.base_data_dir, video_id=video_id, title=title, upload_date=upload_date)

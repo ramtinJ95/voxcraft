@@ -1217,12 +1217,10 @@ def test_load_pipeline_config_reads_json_and_applies_overrides(tmp_path: Path) -
         },
     )
 
-    config, resolved_path = load_pipeline_config(
-        config_path=config_path,
-        overrides={
-            "summary_provider": "pi",
-            "summary_model": "openai/gpt-5.5",
-        },
+    config, resolved_path = load_pipeline_config(config_path=config_path)
+    config = config.with_summary_overrides(
+        provider="pi",
+        model="openai/gpt-5.5",
     )
 
     assert resolved_path == config_path
@@ -1244,6 +1242,14 @@ def test_load_pipeline_config_rejects_unknown_keys(tmp_path: Path) -> None:
 def test_load_pipeline_config_rejects_removed_subtitle_first_setting(tmp_path: Path) -> None:
     config_path = tmp_path / "config.json"
     write_json(config_path, {"subtitle_first": False})
+
+    with pytest.raises(ValueError, match="Extra inputs are not permitted"):
+        load_pipeline_config(config_path=config_path)
+
+
+def test_load_pipeline_config_rejects_legacy_summary_settings(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.json"
+    write_json(config_path, {"summary_model": "gpt-5.5"})
 
     with pytest.raises(ValueError, match="Extra inputs are not permitted"):
         load_pipeline_config(config_path=config_path)
@@ -1439,7 +1445,31 @@ def test_summarize_video_writes_chunk_and_final_outputs(monkeypatch, tmp_path: P
     assert manifest["summary_command"] == "codex"
     assert manifest["summary_model"] == "gpt-5.5"
     assert manifest["summary_thinking_level"] == "high"
+    assert manifest["prompt_version"] == 1
+    assert manifest["chunk_summaries"][0]["prompt_sha256"]
+    assert manifest["chunk_summaries"][0]["output_sha256"]
+    assert manifest["final_prompt_sha256"]
+    assert manifest["final_summary_sha256"]
     assert all(len(line) <= 80 for line in paths.summary_final_path.read_text(encoding="utf-8").splitlines())
+
+    captured_summary_calls.clear()
+    summarize_video(video_id="video123", config=PipelineConfig(base_data_dir=tmp_path))
+    assert captured_summary_calls == []
+
+    write_text(paths.summary_dir / "chunk-001.md", "corrupted summary\n")
+    summarize_video(video_id="video123", config=PipelineConfig(base_data_dir=tmp_path))
+    assert len(captured_summary_calls) == 2
+
+    captured_summary_calls.clear()
+    write_text(paths.summary_final_path, "truncated\n")
+    summarize_video(video_id="video123", config=PipelineConfig(base_data_dir=tmp_path))
+    assert len(captured_summary_calls) == 1
+
+    captured_summary_calls.clear()
+    changed_metadata = metadata.model_copy(update={"title": "Changed title"})
+    write_json(paths.metadata_path, changed_metadata.model_dump(mode="json"))
+    summarize_video(video_id="video123", config=PipelineConfig(base_data_dir=tmp_path))
+    assert len(captured_summary_calls) == 2
 
 
 def test_summarize_video_reruns_when_summary_settings_change(monkeypatch, tmp_path: Path) -> None:
@@ -1654,111 +1684,6 @@ def test_summarize_video_reruns_when_chunk_content_changes(monkeypatch, tmp_path
     manifest = read_json(paths.summary_manifest_path)
     assert manifest["chunk_summaries"][0]["source_chunk_sha256"] == hashlib.sha256(
         b"changed chunk text"
-    ).hexdigest()
-
-
-def test_summarize_video_migrates_legacy_final_summary_and_reruns_missing_hashes(
-    monkeypatch,
-    tmp_path: Path,
-) -> None:
-    paths = initialize_workspace(build_artifact_paths(tmp_path / "video123", "video123"))
-    metadata = VideoMetadata(
-        video_id="video123",
-        url="https://www.youtube.com/watch?v=video123",
-        title="Summary Test",
-        channel="Example Channel",
-        duration_sec=42.0,
-        subtitles={"en": []},
-    )
-    write_json(paths.metadata_path, metadata.model_dump(mode="json"))
-    write_json(
-        paths.chunk_index_path,
-        [
-            {
-                "index": 1,
-                "start_sec": 0.0,
-                "end_sec": 12.0,
-                "path": "chunks/chunk-001.txt",
-                "char_count": 20,
-            }
-        ],
-    )
-    write_text(paths.chunks_dir / "chunk-001.txt", "alpha beta gamma\n")
-    write_text(paths.summary_dir / "chunk-001.md", "## Chunk Summary\n\nChunk summary.\n")
-    write_json(
-        paths.summary_payload_path,
-        {
-            "video_id": "video123",
-            "url": metadata.url,
-            "title": metadata.title,
-            "channel": metadata.channel,
-            "duration_sec": metadata.duration_sec,
-            "source_kind": "subtitles",
-            "transcript_path": "transcript/clean.txt",
-            "segments_path": "transcript/segments.json",
-            "chunk_index_path": "chunks/index.json",
-            "chunk_count": 1,
-            "segment_count": 1,
-            "artifacts": {},
-            "transcription": None,
-            "notes": [],
-        },
-    )
-    write_text(paths.summary_dir / "final.md", "# Final Summary\n\nLegacy summary.\n")
-    write_json(
-        paths.summary_manifest_path,
-        {
-            "video_id": "video123",
-            "codex_command": "codex",
-            "codex_model": "gpt-5.5",
-            "codex_reasoning_effort": "high",
-            "chunk_summaries": [
-                {
-                    "index": 1,
-                    "start_sec": 0.0,
-                    "end_sec": 12.0,
-                    "source_chunk_path": "chunks/chunk-001.txt",
-                    "prompt_path": "summary/prompts/chunk-001.prompt.txt",
-                    "output_path": "summary/chunk-001.md",
-                }
-            ],
-            "final_prompt_path": "summary/prompts/final.prompt.txt",
-            "final_summary_path": "summary/final.md",
-        },
-    )
-    captured_prompts: list[str] = []
-
-    def fake_run_summary_cli(
-        prompt: str,
-        output_path: Path,
-        workdir: Path,
-        provider: str,
-        command: str,
-        model: str | None = None,
-        thinking_level: str | None = None,
-    ) -> str:
-        captured_prompts.append(prompt)
-        content = "# Final Summary\n\nFresh summary.\n" if "Combine these chunk summaries" in prompt else "fresh chunk\n"
-        write_text(output_path, content)
-        return content
-
-    monkeypatch.setattr("voxcraft.summarize.run_summary_cli", fake_run_summary_cli)
-
-    result = summarize_video(
-        video_id="video123",
-        config=PipelineConfig(base_data_dir=tmp_path),
-    )
-
-    assert result.final_summary_path == "final.md"
-    assert len(captured_prompts) == 2
-    assert paths.summary_final_path.read_text(encoding="utf-8") == "# Final Summary\n\nFresh summary.\n"
-    assert not (paths.summary_dir / "final.md").exists()
-    manifest = read_json(paths.summary_manifest_path)
-    assert manifest["final_summary_path"] == "final.md"
-    assert manifest["summary_provider"] == "codex"
-    assert manifest["summary_command"] == "codex"
-    assert manifest["chunk_summaries"][0]["source_chunk_sha256"] == hashlib.sha256(
-        b"alpha beta gamma"
     ).hexdigest()
 
 

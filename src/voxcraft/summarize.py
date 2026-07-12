@@ -20,6 +20,7 @@ from .models import (
 from .utils import append_log, path_string, read_json, write_json, write_text
 
 FINAL_SUMMARY_WRAP_WIDTH = 80
+SUMMARY_PROMPT_VERSION = 1
 SUMMARY_STDIN_DIRECTIVE = "Follow the piped prompt exactly and output only the requested markdown. Do not use tools."
 FENCE_PATTERN = re.compile(r"^\s*(```|~~~)")
 LIST_ITEM_PATTERN = re.compile(r"^(\s*)([-*+]|\d+\.)\s+(.*)$")
@@ -45,7 +46,6 @@ def summarize_video(
         raise RuntimeError("No chunk files are available to summarize.")
 
     manifest = _load_summary_manifest(paths.summary_manifest_path)
-    manifest = _migrate_legacy_final_summary(paths, manifest)
     settings_match = _summary_settings_match(
         manifest=manifest,
         provider=summary_provider,
@@ -53,32 +53,13 @@ def summarize_video(
         model=summary_model,
         thinking_level=summary_thinking_level,
     )
-    if manifest is not None and not force and paths.summary_final_path.exists():
-        if (
-            settings_match
-            and len(manifest.chunk_summaries) == len(chunk_manifest)
-            and all(
-                _chunk_summary_matches_input(
-                    entry=entry,
-                    chunk=chunk,
-                    chunk_sha256=_chunk_file_sha256(paths.root_dir / chunk.path),
-                    root_dir=paths.root_dir,
-                )
-                for entry, chunk in zip(manifest.chunk_summaries, chunk_manifest, strict=True)
-            )
-        ):
-            wrap_markdown_file(paths.summary_final_path, width=FINAL_SUMMARY_WRAP_WIDTH)
-            summary_payload = SummaryPayload.model_validate(read_json(paths.summary_payload_path))
-            return ProcessResult(
-                metadata=metadata,
-                source_kind=summary_payload.source_kind,
-                artifact_root=paths.root_dir,
-                chunk_count=len(chunk_manifest),
-                notes=["Reused cached summaries."],
-                summary_manifest_path=path_string(paths.summary_manifest_path, paths.root_dir),
-                final_summary_path=path_string(paths.summary_final_path, paths.root_dir),
-            )
-
+    final_output_intact = (
+        manifest is not None
+        and manifest.final_summary_sha256 is not None
+        and paths.summary_final_path.exists()
+        and manifest.final_summary_sha256
+        == _content_sha256(paths.summary_final_path.read_text(encoding="utf-8"))
+    )
     provider_label = _summary_provider_label(summary_provider)
     append_log(paths.pipeline_log_path, f"Starting {provider_label} summarization for {video_id}")
     summary_entries: list[ChunkSummaryEntry] = []
@@ -93,6 +74,7 @@ def summarize_video(
         prompt_path = paths.summary_prompts_dir / f"chunk-{chunk.index:03}.prompt.txt"
         output_path = paths.summary_dir / f"chunk-{chunk.index:03}.md"
         prompt = build_chunk_summary_prompt(metadata=metadata, chunk=chunk, chunk_text=chunk_text)
+        prompt_sha256 = _content_sha256(prompt)
         write_text(prompt_path, prompt)
         existing_entry = existing_chunk_summaries.get(chunk.index)
         chunk_output_reusable = (
@@ -102,6 +84,7 @@ def summarize_video(
                 entry=existing_entry,
                 chunk=chunk,
                 chunk_sha256=chunk_sha256,
+                prompt_sha256=prompt_sha256,
                 root_dir=paths.root_dir,
             )
             and output_path == paths.root_dir / existing_entry.output_path
@@ -130,6 +113,8 @@ def summarize_video(
                 end_sec=chunk.end_sec,
                 source_chunk_path=chunk.path,
                 source_chunk_sha256=chunk_sha256,
+                prompt_sha256=prompt_sha256,
+                output_sha256=_content_sha256(rendered),
                 prompt_path=path_string(prompt_path, paths.root_dir),
                 output_path=path_string(output_path, paths.root_dir),
             )
@@ -140,8 +125,16 @@ def summarize_video(
         chunk_summaries=rendered_chunk_summaries,
         chunk_manifest=chunk_manifest,
     )
+    final_prompt_sha256 = _content_sha256(final_prompt)
     write_text(paths.summary_final_prompt_path, final_prompt)
-    if force or not settings_match or not reused_all_chunk_summaries or not paths.summary_final_path.exists():
+    final_output_reusable = (
+        settings_match
+        and reused_all_chunk_summaries
+        and final_output_intact
+        and manifest is not None
+        and manifest.final_prompt_sha256 == final_prompt_sha256
+    )
+    if force or not final_output_reusable:
         run_summary_cli(
             prompt=final_prompt,
             output_path=paths.summary_final_path,
@@ -153,18 +146,23 @@ def summarize_video(
         )
         append_log(paths.pipeline_log_path, f"Wrote final {provider_label} summary")
 
+    wrap_markdown_file(paths.summary_final_path, width=FINAL_SUMMARY_WRAP_WIDTH)
     summary_manifest = SummaryManifest(
         video_id=video_id,
+        prompt_version=SUMMARY_PROMPT_VERSION,
         summary_provider=summary_provider,
         summary_command=summary_command,
         summary_model=summary_model,
         summary_thinking_level=summary_thinking_level,
         chunk_summaries=summary_entries,
         final_prompt_path=path_string(paths.summary_final_prompt_path, paths.root_dir),
+        final_prompt_sha256=final_prompt_sha256,
         final_summary_path=path_string(paths.summary_final_path, paths.root_dir),
+        final_summary_sha256=_content_sha256(
+            paths.summary_final_path.read_text(encoding="utf-8")
+        ),
     )
     write_json(paths.summary_manifest_path, summary_manifest.model_dump(mode="json"))
-    wrap_markdown_file(paths.summary_final_path, width=FINAL_SUMMARY_WRAP_WIDTH)
 
     summary_payload = SummaryPayload.model_validate(read_json(paths.summary_payload_path))
     return ProcessResult(
@@ -416,7 +414,8 @@ def _summary_settings_match(
     if manifest is None:
         return False
     return (
-        manifest.summary_provider == provider
+        manifest.prompt_version == SUMMARY_PROMPT_VERSION
+        and manifest.summary_provider == provider
         and manifest.summary_command == command
         and manifest.summary_model == model
         and manifest.summary_thinking_level == thinking_level
@@ -428,52 +427,25 @@ def _chunk_summary_matches_input(
     entry: ChunkSummaryEntry,
     chunk: ChunkManifestEntry,
     chunk_sha256: str,
+    prompt_sha256: str,
     root_dir: Path,
 ) -> bool:
     if entry.index != chunk.index or entry.source_chunk_path != chunk.path:
         return False
     if entry.source_chunk_sha256 != chunk_sha256:
         return False
-    return (root_dir / entry.output_path).exists()
-
-
-def _chunk_file_sha256(path: Path) -> str:
-    return _content_sha256(path.read_text(encoding="utf-8").strip())
+    if entry.prompt_sha256 != prompt_sha256:
+        return False
+    output_path = root_dir / entry.output_path
+    if entry.output_sha256 is None or not output_path.exists():
+        return False
+    return entry.output_sha256 == _content_sha256(
+        output_path.read_text(encoding="utf-8").strip()
+    )
 
 
 def _content_sha256(content: str) -> str:
     return hashlib.sha256(content.encode("utf-8")).hexdigest()
-
-
-def _migrate_legacy_final_summary(
-    paths,
-    manifest: SummaryManifest | None,
-) -> SummaryManifest | None:
-    legacy_final_path = paths.summary_dir / "final.md"
-    if legacy_final_path == paths.summary_final_path:
-        return manifest
-
-    desired_final_summary_path = path_string(paths.summary_final_path, paths.root_dir)
-    if paths.summary_final_path.exists():
-        if manifest is None or manifest.final_summary_path == desired_final_summary_path:
-            return manifest
-        updated_manifest = manifest.model_copy(update={"final_summary_path": desired_final_summary_path})
-        write_json(paths.summary_manifest_path, updated_manifest.model_dump(mode="json"))
-        return updated_manifest
-
-    if not legacy_final_path.exists():
-        return manifest
-
-    write_text(paths.summary_final_path, legacy_final_path.read_text(encoding="utf-8"))
-    legacy_final_path.unlink()
-    append_log(paths.pipeline_log_path, "Moved legacy summary/final.md to final.md")
-
-    if manifest is None:
-        return None
-
-    updated_manifest = manifest.model_copy(update={"final_summary_path": desired_final_summary_path})
-    write_json(paths.summary_manifest_path, updated_manifest.model_dump(mode="json"))
-    return updated_manifest
 
 
 def _summary_provider_label(provider: str) -> str:
