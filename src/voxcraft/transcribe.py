@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import re
 import shutil
@@ -322,6 +323,7 @@ def _qwen_payload_marker(
         "input_path": str(request.input_path.resolve()),
         "input_size": request.input_path.stat().st_size,
         "input_mtime_ns": request.input_path.stat().st_mtime_ns,
+        "input_sha256": _file_sha256(request.input_path),
         "language": request.language or None,
         "model": request.model,
         "num_draft_tokens": num_draft_tokens,
@@ -654,6 +656,14 @@ def _write_qwen_payload(path: Path, payload: dict[str, object]) -> None:
         encoding="utf-8",
     )
     temporary_path.replace(path)
+
+
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
 
 
 def _ends_sentence(text: str) -> bool:
