@@ -191,6 +191,45 @@ def test_worker_preserves_discovered_paths_when_summarization_fails(monkeypatch,
     assert updated.log_path == str(log_path)
 
 
+def test_worker_stops_when_job_is_reconciled_during_processing(monkeypatch, tmp_path: Path) -> None:
+    from voxcraft.config import PipelineConfig
+    from voxcraft.models import ProcessResult, SourceKind, VideoMetadata
+    from voxcraft.server import JobWorker
+
+    config = PipelineConfig(base_data_dir=tmp_path / "videos")
+    store = JobStore(tmp_path / "jobs.sqlite3")
+    store.initialize()
+    job = store.create_job("https://www.youtube.com/watch?v=abc123")
+    running_job = store.claim_next_queued()
+    assert running_job is not None
+    workspace = tmp_path / "videos" / "demo--abc123"
+    summary_called = False
+
+    def fake_process_video(**kwargs):
+        assert store.mark_failed(job.id, "interrupted") is True
+        return ProcessResult(
+            metadata=VideoMetadata(video_id="abc123", url=job.url),
+            source_kind=SourceKind.LOCAL_ASR,
+            artifact_root=workspace,
+        )
+
+    def fake_summarize_video(**kwargs):
+        nonlocal summary_called
+        summary_called = True
+        raise AssertionError("summarization should not start for a reconciled job")
+
+    monkeypatch.setattr("voxcraft.server.process_video", fake_process_video)
+    monkeypatch.setattr("voxcraft.server.summarize_video", fake_summarize_video)
+
+    JobWorker(store=store, config=config)._run_job(running_job)
+    updated = store.get_job(job.id)
+
+    assert summary_called is False
+    assert updated is not None
+    assert updated.status == "failed"
+    assert updated.error == "interrupted"
+
+
 def test_reconcile_rejects_stale_final_markdown_after_restart(tmp_path: Path) -> None:
     from voxcraft.config import PipelineConfig
     from voxcraft.server import reconcile_interrupted_jobs

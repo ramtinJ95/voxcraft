@@ -156,7 +156,7 @@ class JobStore:
         workspace_path: str | None = None,
         final_md_path: str | None = None,
         log_path: str | None = None,
-    ) -> None:
+    ) -> bool:
         updates: dict[str, Any] = {"updated_at": utc_now()}
         if message is not None:
             updates["message"] = message
@@ -168,7 +168,7 @@ class JobStore:
             updates["final_md_path"] = final_md_path
         if log_path is not None:
             updates["log_path"] = log_path
-        self._update(job_id, updates)
+        return self._update(job_id, updates, expected_status="running")
 
     def mark_done(
         self,

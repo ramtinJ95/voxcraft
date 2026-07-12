@@ -96,7 +96,8 @@ class JobWorker:
     def _run_job(self, job: JobRecord) -> None:
         try:
             options = job.options
-            self.store.update_running(job.id, message="Preparing transcript pipeline.")
+            if not self.store.update_running(job.id, message="Preparing transcript pipeline."):
+                return
             process_result = process_video(
                 url=job.url,
                 config=self.config,
@@ -112,13 +113,14 @@ class JobWorker:
             )
             workspace_path = str(process_result.artifact_root)
             log_path = str(process_result.artifact_root / "logs" / "pipeline.log")
-            self.store.update_running(
+            if not self.store.update_running(
                 job.id,
                 message="Summarizing transcript.",
                 video_id=process_result.metadata.video_id,
                 workspace_path=workspace_path,
                 log_path=log_path,
-            )
+            ):
+                return
             summary_result = summarize_video(
                 video_id=process_result.metadata.video_id,
                 config=self.config,
@@ -130,13 +132,14 @@ class JobWorker:
             )
             if final_md_path is None or not final_md_path.exists():
                 raise RuntimeError("Summarization completed without a final.md path.")
-            self.store.mark_done(
+            if not self.store.mark_done(
                 job.id,
                 video_id=summary_result.metadata.video_id,
                 workspace_path=str(summary_result.artifact_root),
                 final_md_path=str(final_md_path),
                 log_path=str(summary_result.artifact_root / "logs" / "pipeline.log"),
-            )
+            ):
+                return
         except Exception as exc:
             current_job = self.store.get_job(job.id) or job
             recovered_paths = _recover_failure_paths(job=current_job, config=self.config)
