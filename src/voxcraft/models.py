@@ -3,7 +3,7 @@ from __future__ import annotations
 from enum import Enum
 from pathlib import Path
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field
 
 
 class SourceKind(str, Enum):
@@ -131,25 +131,6 @@ class ChunkSummaryEntry(BaseModel):
 
 
 class SummaryManifest(BaseModel):
-    @model_validator(mode="before")
-    @classmethod
-    def _migrate_legacy_codex_fields(cls, data):
-        if not isinstance(data, dict):
-            return data
-        updated = dict(data)
-        if "summary_provider" not in updated:
-            updated["summary_provider"] = "codex"
-        if "summary_command" not in updated and "codex_command" in updated:
-            updated["summary_command"] = updated["codex_command"]
-        if "summary_model" not in updated and "codex_model" in updated:
-            updated["summary_model"] = updated["codex_model"]
-        if "summary_thinking_level" not in updated:
-            if "summary_reasoning_effort" in updated:
-                updated["summary_thinking_level"] = updated["summary_reasoning_effort"]
-            elif "codex_reasoning_effort" in updated:
-                updated["summary_thinking_level"] = updated["codex_reasoning_effort"]
-        return updated
-
     video_id: str
     summary_provider: str = "codex"
     summary_command: str

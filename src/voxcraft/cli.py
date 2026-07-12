@@ -361,15 +361,13 @@ def process(
         config_overrides["whisper_cpp_model_path"] = whisper_cpp_model
     if threads is not None:
         config_overrides["whisper_cpp_threads"] = threads
-    if normalized_summary_provider is not None:
-        config_overrides["summary_provider"] = normalized_summary_provider
-    if summary_command is not None:
-        config_overrides["summary_command"] = summary_command
-    if summary_model is not None:
-        config_overrides["summary_model"] = summary_model
-    if summary_thinking_level is not None:
-        config_overrides["summary_thinking_level"] = summary_thinking_level
     config, resolved_config_path = _load_runtime_config(ctx, overrides=config_overrides)
+    config = config.with_summary_overrides(
+        provider=normalized_summary_provider,
+        command=summary_command,
+        model=summary_model,
+        thinking_level=summary_thinking_level,
+    )
     effective_asr_backend = normalized_asr_backend or config.default_asr_backend
     effective_summary_provider = config.summary_provider
     if effective_asr_backend == "whisper-cpp" and diarize:
@@ -483,15 +481,13 @@ def summarize(
     config_overrides: dict[str, object] = {}
     if data_dir is not None:
         config_overrides["base_data_dir"] = data_dir
-    if normalized_provider is not None:
-        config_overrides["summary_provider"] = normalized_provider
-    if summary_command is not None:
-        config_overrides["summary_command"] = summary_command
-    if model is not None:
-        config_overrides["summary_model"] = model
-    if thinking_level is not None:
-        config_overrides["summary_thinking_level"] = thinking_level
     config, _ = _load_runtime_config(ctx, overrides=config_overrides)
+    config = config.with_summary_overrides(
+        provider=normalized_provider,
+        command=summary_command,
+        model=model,
+        thinking_level=thinking_level,
+    )
     result = summarize_video(video_id=video_id, config=config, model=model, thinking_level=thinking_level, force=force)
     console.print(f"Summarized {result.metadata.video_id} into {result.final_summary_path}.")
 

@@ -111,7 +111,7 @@ Each provider profile can define:
 - model
 - thinking level
 
-The selected provider is exposed through:
+The selected provider and its computed profile values are exposed through:
 - `summary_provider`
 - `summary_command`
 - `summary_model`

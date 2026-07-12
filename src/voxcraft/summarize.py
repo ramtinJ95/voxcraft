@@ -45,7 +45,6 @@ def summarize_video(
         raise RuntimeError("No chunk files are available to summarize.")
 
     manifest = _load_summary_manifest(paths.summary_manifest_path)
-    manifest = _migrate_legacy_final_summary(paths, manifest)
     settings_match = _summary_settings_match(
         manifest=manifest,
         provider=summary_provider,
@@ -443,37 +442,6 @@ def _chunk_file_sha256(path: Path) -> str:
 
 def _content_sha256(content: str) -> str:
     return hashlib.sha256(content.encode("utf-8")).hexdigest()
-
-
-def _migrate_legacy_final_summary(
-    paths,
-    manifest: SummaryManifest | None,
-) -> SummaryManifest | None:
-    legacy_final_path = paths.summary_dir / "final.md"
-    if legacy_final_path == paths.summary_final_path:
-        return manifest
-
-    desired_final_summary_path = path_string(paths.summary_final_path, paths.root_dir)
-    if paths.summary_final_path.exists():
-        if manifest is None or manifest.final_summary_path == desired_final_summary_path:
-            return manifest
-        updated_manifest = manifest.model_copy(update={"final_summary_path": desired_final_summary_path})
-        write_json(paths.summary_manifest_path, updated_manifest.model_dump(mode="json"))
-        return updated_manifest
-
-    if not legacy_final_path.exists():
-        return manifest
-
-    write_text(paths.summary_final_path, legacy_final_path.read_text(encoding="utf-8"))
-    legacy_final_path.unlink()
-    append_log(paths.pipeline_log_path, "Moved legacy summary/final.md to final.md")
-
-    if manifest is None:
-        return None
-
-    updated_manifest = manifest.model_copy(update={"final_summary_path": desired_final_summary_path})
-    write_json(paths.summary_manifest_path, updated_manifest.model_dump(mode="json"))
-    return updated_manifest
 
 
 def _summary_provider_label(provider: str) -> str:
