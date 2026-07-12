@@ -21,8 +21,6 @@ def clean_segments(segments: list[TranscriptSegment]) -> list[TranscriptSegment]
     for segment in segments:
         text = normalize_transcript_text(segment.text)
         if not text:
-            if previous == (segment.speaker, text):
-                continue
             continue
         if previous == (segment.speaker, text):
             continue

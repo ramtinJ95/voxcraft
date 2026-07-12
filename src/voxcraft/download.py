@@ -69,12 +69,11 @@ def choose_subtitle_candidate(
     def best_track(
         language: str,
         tracks: list[dict[str, Any] | SubtitleCandidate] | None,
-        is_automatic: bool,
     ) -> SubtitleCandidate | None:
         if not tracks:
             return None
 
-        normalized_tracks = [_coerce_subtitle_track(language, track, is_automatic) for track in tracks]
+        normalized_tracks = [_coerce_subtitle_track(language, track) for track in tracks]
         ranked_tracks = sorted(
             normalized_tracks,
             key=lambda track: EXTENSION_PRIORITY.get(track.ext, 99),
@@ -86,7 +85,7 @@ def choose_subtitle_candidate(
         preferred_language=preferred_language,
         prefer_english=prefer_english,
     )
-    return best_track(language, subtitles.get(language), is_automatic=False) if language else None
+    return best_track(language, subtitles.get(language)) if language else None
 
 
 def choose_subtitle_language(
@@ -116,16 +115,14 @@ def choose_subtitle_language(
 def _coerce_subtitle_track(
     language: str,
     track: dict[str, Any] | SubtitleCandidate,
-    is_automatic: bool,
 ) -> SubtitleCandidate:
     if isinstance(track, SubtitleCandidate):
-        return track.model_copy(update={"is_automatic": is_automatic})
+        return track
     return SubtitleCandidate(
         language=language,
         ext=track.get("ext", "vtt"),
         url=track.get("url"),
         name=track.get("name"),
-        is_automatic=is_automatic,
     )
 
 

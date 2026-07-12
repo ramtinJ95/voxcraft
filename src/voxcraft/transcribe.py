@@ -201,8 +201,6 @@ def _transcribe_with_qwen3_asr(
             draft_model=draft_model,
             num_draft_tokens=num_draft_tokens,
         )
-        output_json_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-        _append_optional_log(log_path, f"Saved raw qwen3-asr output to {output_json_path.name}")
     else:
         _append_optional_log(log_path, f"Reusing saved qwen3-asr output from {output_json_path.name}")
 
@@ -223,6 +221,7 @@ def _transcribe_with_qwen3_asr(
         _append_optional_log(log_path, "Finished pyannote diarization")
 
     output_json_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    _append_optional_log(log_path, f"Saved qwen3-asr output to {output_json_path.name}")
 
     language = str(payload.get("language") or request.language or "")
     speaker_segments = payload.get("speaker_segments")

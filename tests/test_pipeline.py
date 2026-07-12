@@ -43,7 +43,6 @@ def test_choose_subtitle_candidate_prefers_manual_english_first() -> None:
 
     assert candidate is not None
     assert candidate.language == "en"
-    assert candidate.is_automatic is False
 
 
 def test_choose_subtitle_candidate_can_prefer_explicit_language() -> None:
