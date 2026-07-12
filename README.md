@@ -268,7 +268,6 @@ voxcraft --config ./config.json summarize <youtube_id>
 voxcraft summarize <youtube_id> --provider gemini
 voxcraft summarize <youtube_id> --provider pi --model openai/gpt-5.5 --thinking-level high
 voxcraft rechunk <youtube_id>
-voxcraft prepare-summary <youtube_id>
 VOXCRAFT_SERVER_TOKEN=... voxcraft server --host 127.0.0.1 --port 8765
 VOXCRAFT_SERVER_URL=http://<host>:8765 VOXCRAFT_SERVER_TOKEN=... voxcraft submit-job "<youtube-url>" --wait 300 --print-final
 voxcraft check-job <job_id>
@@ -289,7 +288,6 @@ Command behavior:
   `--summary-provider` / `--provider`, `--summary-model` / `--model`, and `--summary-thinking-level` / `--thinking-level` are per-run overrides on top of the loaded config
 - `rechunk`
   Regenerates chunk files from existing transcript segments
-- `prepare-summary`
   Rebuilds the summary payload from existing transcript artifacts
 - `server`
   Runs the authenticated async job API for long-running URL-to-`final.md` jobs

@@ -272,20 +272,7 @@ def rechunk_video(
     return _rebuild_summary_artifacts_from_segments(
         video_id=video_id,
         config=config,
-        fallback_note="Chunk files regenerated from existing segments.",
         log_message="Rechunked transcript into",
-    )
-
-
-def prepare_summary_input(
-    video_id: str,
-    config: PipelineConfig,
-) -> ProcessResult:
-    return _rebuild_summary_artifacts_from_segments(
-        video_id=video_id,
-        config=config,
-        fallback_note="Summary payload regenerated from existing segments.",
-        log_message="Prepared summary payload with",
     )
 
 
@@ -293,20 +280,23 @@ def _rebuild_summary_artifacts_from_segments(
     *,
     video_id: str,
     config: PipelineConfig,
-    fallback_note: str,
     log_message: str,
 ) -> ProcessResult:
     paths = initialize_workspace(resolve_artifact_paths(config.base_data_dir, video_id))
     metadata = VideoMetadata.model_validate(read_json(paths.metadata_path))
     summary = _load_summary_payload(paths.summary_payload_path)
+    if summary is None:
+        raise RuntimeError(
+            "Cannot rechunk without summary_input/payload.json; rerun process for this video first."
+        )
     segments = load_segments(paths.segments_path)
     chunk_manifest = _write_summary_artifacts(
         metadata=metadata,
-        source_kind=summary.source_kind if summary else SourceKind.LOCAL_ASR,
+        source_kind=summary.source_kind,
         paths=paths,
         segments=segments,
-        notes=summary.notes if summary else [fallback_note],
-        transcription=summary.transcription if summary else None,
+        notes=summary.notes,
+        transcription=summary.transcription,
         subtitle_path=_resolve_artifact_path(paths, summary, "subtitle_source"),
         subtitle_language=_summary_subtitle_language(summary),
         audio_source_path=_resolve_artifact_path(paths, summary, "audio_source"),
@@ -318,7 +308,7 @@ def _rebuild_summary_artifacts_from_segments(
     refreshed_summary = _load_summary_payload(paths.summary_payload_path)
     return ProcessResult(
         metadata=metadata,
-        source_kind=refreshed_summary.source_kind if refreshed_summary else SourceKind.LOCAL_ASR,
+        source_kind=refreshed_summary.source_kind if refreshed_summary else summary.source_kind,
         artifact_root=paths.root_dir,
         chunk_count=refreshed_summary.chunk_count if refreshed_summary else len(chunk_manifest),
         notes=refreshed_summary.notes if refreshed_summary else [],
