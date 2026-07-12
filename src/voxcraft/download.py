@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -10,7 +11,7 @@ from yt_dlp.utils import DownloadError
 
 from .models import SubtitleCandidate
 from .models import VideoMetadata
-from .utils import write_json
+from .utils import append_log, write_json
 
 EXTENSION_PRIORITY = {
     "vtt": 0,
@@ -49,7 +50,7 @@ def build_subtitle_download_options(
     }
 
 
-def build_audio_download_options(source_dir: Path) -> dict[str, Any]:
+def build_audio_download_options(source_dir: Path, *, force: bool = False) -> dict[str, Any]:
     return {
         "quiet": True,
         "no_warnings": True,
@@ -57,6 +58,7 @@ def build_audio_download_options(source_dir: Path) -> dict[str, Any]:
         "paths": {"home": str(source_dir)},
         "outtmpl": {"default": "audio.%(ext)s"},
         "noplaylist": True,
+        "overwrites": force,
     }
 
 
@@ -207,17 +209,25 @@ def download_audio_file(
     url: str,
     source_dir: Path,
     force: bool = False,
+    log_path: Path | None = None,
+    retry_delay_sec: float = 2.0,
 ) -> Path:
     existing = _find_audio_file(source_dir)
     if existing is not None and not force:
         return existing
 
-    try:
-        with YoutubeDL(build_audio_download_options(source_dir)) as ydl:
-            info = ydl.extract_info(url, download=True)
-            path = _extract_requested_filepath(info)
-    except DownloadError as exc:
-        raise RuntimeError(f"Failed to download audio: {exc}") from exc
+    for attempt in range(2):
+        try:
+            with YoutubeDL(build_audio_download_options(source_dir, force=force)) as ydl:
+                info = ydl.extract_info(url, download=True)
+                path = _extract_requested_filepath(info)
+            break
+        except DownloadError as exc:
+            if attempt == 1:
+                raise RuntimeError(f"Failed to download audio after one retry: {exc}") from exc
+            if log_path is not None:
+                append_log(log_path, f"Audio download failed; retrying once: {exc}")
+            time.sleep(retry_delay_sec)
 
     if path is not None and path.exists():
         return path
@@ -289,7 +299,12 @@ def _find_audio_file(source_dir: Path) -> Path | None:
     candidates = sorted(
         path
         for path in source_dir.glob("audio.*")
-        if path.is_file() and path.suffix.lower() not in {".part", ".ytdl", ".wav"}
+        if path.is_file()
+        and path.suffix.lower() != ".wav"
+        and not any(
+            marker in path.name.lower()
+            for marker in (".part", ".ytdl", ".temp", ".frag")
+        )
     )
     return candidates[0] if candidates else None
 

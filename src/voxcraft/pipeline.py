@@ -164,6 +164,7 @@ def process_video(
             url=metadata.url,
             source_dir=paths.source_dir,
             force=force,
+            log_path=paths.pipeline_log_path,
         )
         normalized_audio_path = paths.source_dir / "audio.wav"
         if force or not normalized_audio_path.exists():

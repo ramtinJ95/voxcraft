@@ -16,7 +16,13 @@ from voxcraft.config import (
     normalize_summary_provider,
     resolve_config_path,
 )
-from voxcraft.download import _download_direct_subtitle, choose_subtitle_candidate, write_metadata_artifacts
+from voxcraft.download import (
+    _download_direct_subtitle,
+    _find_audio_file,
+    choose_subtitle_candidate,
+    download_audio_file,
+    write_metadata_artifacts,
+)
 from voxcraft.manifest import build_artifact_paths, initialize_workspace, resolve_video_root
 from voxcraft.models import SourceKind, SubtitleCandidate, TranscriptSegment, TranscriptionDetails, VideoMetadata
 from voxcraft.pipeline import _cached_subtitle_languages, _transcription_details_match, process_video, rechunk_video
@@ -195,6 +201,90 @@ def test_download_direct_subtitle_uses_timeout(monkeypatch, tmp_path: Path) -> N
 
     assert captured_call == {"url": "https://example.com/subtitles.vtt", "timeout": 30}
     assert path.read_text(encoding="utf-8") == "WEBVTT\n\n"
+
+
+def test_download_audio_retries_once_and_logs_first_failure(monkeypatch, tmp_path: Path) -> None:
+    from yt_dlp.utils import DownloadError
+
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    log_path = tmp_path / "pipeline.log"
+    attempts = 0
+
+    class FakeYoutubeDL:
+        def __init__(self, options):
+            self.options = options
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return None
+
+        def extract_info(self, url: str, download: bool):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise DownloadError("HTTP Error 403: Forbidden")
+            audio_path = source_dir / "audio.webm"
+            audio_path.write_bytes(b"audio")
+            return {"requested_downloads": [{"filepath": str(audio_path)}]}
+
+    monkeypatch.setattr("voxcraft.download.YoutubeDL", FakeYoutubeDL)
+
+    result = download_audio_file(
+        "https://www.youtube.com/watch?v=abc123",
+        source_dir,
+        log_path=log_path,
+        retry_delay_sec=0,
+    )
+
+    assert result == source_dir / "audio.webm"
+    assert attempts == 2
+    assert "Audio download failed; retrying once" in log_path.read_text(encoding="utf-8")
+
+
+def test_download_audio_force_requests_overwrite(monkeypatch, tmp_path: Path) -> None:
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    audio_path = source_dir / "audio.webm"
+    audio_path.write_bytes(b"old")
+    captured_options: dict[str, object] = {}
+
+    class FakeYoutubeDL:
+        def __init__(self, options):
+            captured_options.update(options)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return None
+
+        def extract_info(self, url: str, download: bool):
+            audio_path.write_bytes(b"new")
+            return {"requested_downloads": [{"filepath": str(audio_path)}]}
+
+    monkeypatch.setattr("voxcraft.download.YoutubeDL", FakeYoutubeDL)
+
+    result = download_audio_file("https://example.com/video", source_dir, force=True)
+
+    assert result == audio_path
+    assert audio_path.read_bytes() == b"new"
+    assert captured_options["overwrites"] is True
+
+
+def test_find_audio_file_ignores_ytdlp_fragment_artifacts(tmp_path: Path) -> None:
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    (source_dir / "audio.webm.part-Frag0").write_bytes(b"fragment")
+    (source_dir / "audio.webm.ytdl").write_bytes(b"state")
+
+    assert _find_audio_file(source_dir) is None
+
+    final_path = source_dir / "audio.webm"
+    final_path.write_bytes(b"complete")
+    assert _find_audio_file(source_dir) == final_path
 
 
 def test_process_video_dry_run_plans_asr_without_subtitles(monkeypatch, tmp_path: Path) -> None:
