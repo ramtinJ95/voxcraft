@@ -1043,6 +1043,14 @@ def test_load_pipeline_config_rejects_unknown_keys(tmp_path: Path) -> None:
         load_pipeline_config(config_path=config_path)
 
 
+def test_load_pipeline_config_rejects_removed_subtitle_first_setting(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.json"
+    write_json(config_path, {"subtitle_first": False})
+
+    with pytest.raises(ValueError, match="Extra inputs are not permitted"):
+        load_pipeline_config(config_path=config_path)
+
+
 def test_build_summary_command_for_claude_disables_tools() -> None:
     command, writes_to_stdout = _build_summary_command(
         provider="claude",

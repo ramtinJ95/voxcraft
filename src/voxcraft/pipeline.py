@@ -135,7 +135,7 @@ def process_video(
     audio_source_path: Path | None = None
     normalized_audio_path: Path | None = None
 
-    if config.subtitle_first and candidate is not None:
+    if candidate is not None:
         append_log(paths.pipeline_log_path, f"Attempting subtitle-first processing with {candidate.language}")
         subtitle_path = download_subtitle_file(
             url=metadata.url,
@@ -399,9 +399,6 @@ def _cached_requested_source_plan(
     config: PipelineConfig,
     language: str | None,
 ) -> tuple[SourceKind | None, str | None]:
-    if not config.subtitle_first:
-        return SourceKind.LOCAL_ASR, None
-
     subtitle_languages = _cached_subtitle_languages(metadata_payload)
     if not subtitle_languages:
         return SourceKind.LOCAL_ASR, None
