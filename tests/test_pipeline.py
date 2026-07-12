@@ -73,6 +73,19 @@ def test_choose_subtitle_candidate_falls_back_to_any_creator_language() -> None:
     assert candidate.language == "fr"
 
 
+def test_choose_subtitle_candidate_skips_languages_without_tracks() -> None:
+    candidate = choose_subtitle_candidate(
+        subtitles={
+            "en": [],
+            "sv": [{"ext": "vtt", "url": "https://example.com/sv.vtt"}],
+        },
+        preferred_language="en",
+    )
+
+    assert candidate is not None
+    assert candidate.language == "sv"
+
+
 def test_choose_subtitle_candidate_ignores_auto_captions_by_default() -> None:
     candidate = choose_subtitle_candidate(
         subtitles={},
@@ -91,6 +104,7 @@ def test_write_metadata_artifacts_keeps_top_level_metadata_compact(tmp_path: Pat
         duration_sec=120.0,
         upload_date="2026-06-11",
         subtitles={
+            "de": [],
             "en": [
                 {
                     "language": "en",
@@ -101,6 +115,7 @@ def test_write_metadata_artifacts_keeps_top_level_metadata_compact(tmp_path: Pat
             ]
         },
         automatic_captions={
+            "fi": [],
             "sv": [
                 {
                     "language": "sv",
