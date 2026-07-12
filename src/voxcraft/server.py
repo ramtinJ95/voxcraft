@@ -8,7 +8,7 @@ from typing import Annotated
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Response, status
 from fastapi.responses import PlainTextResponse
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel
 
 from .config import PipelineConfig, normalize_asr_backend
 from .jobs import JobOptions, JobRecord, JobStore
@@ -18,41 +18,11 @@ from .summarize import summarize_video
 from .utils import extract_youtube_id, read_json
 
 
-class CreateJobRequest(BaseModel):
+class CreateJobRequest(JobOptions):
     url: str
-    language: str | None = None
-    high_quality: bool = False
-    force: bool = False
-    asr_backend: str | None = None
-    model: str | None = None
-    diarize: bool = False
-    num_speakers: int | None = Field(default=None, ge=1)
-    min_speakers: int = Field(default=1, ge=1)
-    max_speakers: int = Field(default=8, ge=1)
-
-    @model_validator(mode="after")
-    def validate_options(self) -> CreateJobRequest:
-        if self.max_speakers < self.min_speakers:
-            raise ValueError("max_speakers must be >= min_speakers")
-        if self.asr_backend is not None:
-            backend = normalize_asr_backend(self.asr_backend)
-            if backend == "whisper-cpp" and self.diarize:
-                raise ValueError("diarize is only supported with qwen3-asr")
-            self.asr_backend = backend
-        return self
 
     def to_job_options(self) -> JobOptions:
-        return JobOptions(
-            language=self.language,
-            high_quality=self.high_quality,
-            force=self.force,
-            asr_backend=self.asr_backend,
-            model=self.model,
-            diarize=self.diarize,
-            num_speakers=self.num_speakers,
-            min_speakers=self.min_speakers,
-            max_speakers=self.max_speakers,
-        )
+        return JobOptions.model_validate(self.model_dump(exclude={"url"}))
 
 
 class JobResponse(BaseModel):

@@ -8,7 +8,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
+
+from .config import normalize_asr_backend
 
 JobStatus = Literal["queued", "running", "done", "failed"]
 
@@ -32,6 +34,16 @@ class JobOptions(BaseModel):
     num_speakers: int | None = Field(default=None, ge=1)
     min_speakers: int = Field(default=1, ge=1)
     max_speakers: int = Field(default=8, ge=1)
+
+    @model_validator(mode="after")
+    def validate_options(self) -> JobOptions:
+        if self.max_speakers < self.min_speakers:
+            raise ValueError("max_speakers must be >= min_speakers")
+        if self.asr_backend is not None:
+            self.asr_backend = normalize_asr_backend(self.asr_backend)
+            if self.asr_backend == "whisper-cpp" and self.diarize:
+                raise ValueError("diarize is only supported with qwen3-asr")
+        return self
 
 
 class JobRecord(BaseModel):

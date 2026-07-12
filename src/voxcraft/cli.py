@@ -524,33 +524,24 @@ def submit_job(
     max_speakers: int = typer.Option(8, min=1, help="Maximum speaker count for diarization auto mode."),
 ) -> None:
     """Submit a YouTube URL to a remote voxcraft server."""
-    if max_speakers < min_speakers:
-        raise typer.BadParameter("--max-speakers must be >= --min-speakers.")
-    normalized_asr_backend: str | None = None
-    if asr_backend is not None:
-        try:
-            normalized_asr_backend = normalize_asr_backend(asr_backend)
-        except ValueError as exc:
-            raise typer.BadParameter(str(exc)) from exc
-    if normalized_asr_backend == "whisper-cpp" and diarize:
-        raise typer.BadParameter("--diarize is only supported with --asr-backend qwen3-asr.")
-
     client = _server_client(server_url=server_url, token=token)
     try:
-        response = client.create_job(
-            _job_payload(
+        try:
+            payload = _job_payload(
                 url=url,
                 language=language,
                 high_quality=high_quality,
                 force=force,
-                asr_backend=normalized_asr_backend,
+                asr_backend=asr_backend,
                 model=model,
                 diarize=diarize,
                 num_speakers=num_speakers,
                 min_speakers=min_speakers,
                 max_speakers=max_speakers,
             )
-        )
+        except ValueError as exc:
+            raise typer.BadParameter(str(exc)) from exc
+        response = client.create_job(payload)
         if wait > 0 and response.job.status in {"queued", "running"}:
             response = client.wait_for_job(response.job.id, timeout_sec=wait, poll_interval_sec=poll_interval)
         if response.job.status == "done" and (print_final or output is not None):
