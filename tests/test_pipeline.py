@@ -25,6 +25,8 @@ from voxcraft.subtitles import load_segments, write_transcript_artifacts
 from voxcraft.summarize import _build_summary_command, summarize_video, wrap_markdown_text
 from voxcraft.transcribe import (
     TranscriptionRequest,
+    _load_reusable_qwen_payload,
+    _qwen_payload_marker,
     resolve_whisper_cpp_model_path,
     resolve_qwen_command_args,
     transcribe_audio_file,
@@ -799,6 +801,139 @@ def test_qwen_transcription_parses_json_and_speaker_segments(monkeypatch, tmp_pa
     assert captured_diarize_args["audio_path"] == audio_path
     assert captured_diarize_args["model_id"] == "pyannote/speaker-diarization-community-1"
     assert captured_diarize_args["num_speakers"] is None
+
+
+def test_qwen_transcription_persists_raw_output_before_diarization(monkeypatch, tmp_path: Path) -> None:
+    audio_path = tmp_path / "audio.wav"
+    audio_path.write_bytes(b"RIFF")
+    output_base = tmp_path / "asr-output"
+
+    def fake_run(command, capture_output, text, check, env):
+        output_dir = Path(command[command.index("--output-dir") + 1])
+        write_json(
+            output_dir / "audio.json",
+            {
+                "text": "Hello",
+                "language": "en",
+                "segments": [{"start": 0.0, "end": 0.5, "text": "Hello"}],
+            },
+        )
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    def fail_diarize(**kwargs):
+        raise RuntimeError("diarization failed")
+
+    monkeypatch.setattr("voxcraft.transcribe.shutil.which", lambda command: f"/usr/local/bin/{command}")
+    monkeypatch.setattr("voxcraft.transcribe.subprocess.run", fake_run)
+    monkeypatch.setattr("voxcraft.transcribe._diarize_qwen_payload_with_pyannote", fail_diarize)
+
+    with pytest.raises(RuntimeError, match="diarization failed"):
+        transcribe_audio_file(
+            request=TranscriptionRequest(
+                input_path=audio_path,
+                backend="qwen3-asr",
+                model="mlx-community/Qwen3-ASR-1.7B-8bit",
+                language="en",
+            ),
+            qwen_diarize=True,
+            output_base=output_base,
+        )
+
+    saved = read_json(output_base.with_suffix(".json"))
+    assert saved["text"] == "Hello"
+    assert "_voxcraft" in saved
+    assert "speaker_segments" not in saved
+
+
+def test_qwen_diarization_retry_clears_stale_speakers(monkeypatch, tmp_path: Path) -> None:
+    audio_path = tmp_path / "audio.wav"
+    audio_path.write_bytes(b"RIFF")
+    output_path = tmp_path / "asr-output.json"
+    request = TranscriptionRequest(
+        input_path=audio_path,
+        backend="qwen3-asr",
+        model="mlx-community/Qwen3-ASR-1.7B-8bit",
+        language="en",
+    )
+    write_json(
+        output_path,
+        {
+            "text": "Hello",
+            "language": "en",
+            "segments": [
+                {"start": 0.0, "end": 0.5, "text": "Hello", "speaker": "STALE"}
+            ],
+            "speaker_segments": [
+                {"start": 0.0, "end": 0.5, "text": "Hello", "speaker": "STALE"}
+            ],
+            "_voxcraft": _qwen_payload_marker(
+                request=request,
+                context="",
+                forced_aligner="Qwen/Qwen3-ForcedAligner-0.6B",
+                dtype="float16",
+                draft_model=None,
+                num_draft_tokens=4,
+            ),
+        },
+    )
+
+    monkeypatch.setattr("voxcraft.transcribe.shutil.which", lambda command: f"/usr/local/bin/{command}")
+    monkeypatch.setattr(
+        "voxcraft.transcribe.subprocess.run",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("Qwen should not rerun")),
+    )
+    monkeypatch.setattr(
+        "voxcraft.transcribe._diarize_qwen_payload_with_pyannote",
+        lambda **kwargs: ([], []),
+    )
+
+    result = transcribe_audio_file(request=request, qwen_diarize=True, output_base=output_path.with_suffix(""))
+    saved = read_json(output_path)
+
+    assert result.details.diarized is False
+    assert result.segments[0].speaker is None
+    assert "speaker_segments" not in saved
+    assert "speaker" not in saved["segments"][0]
+
+
+def test_reusable_qwen_payload_treats_invalid_or_changed_input_as_cache_miss(tmp_path: Path) -> None:
+    audio_path = tmp_path / "audio.wav"
+    audio_path.write_bytes(b"RIFF")
+    output_path = tmp_path / "asr-output.json"
+    request = TranscriptionRequest(
+        input_path=audio_path,
+        backend="qwen3-asr",
+        model="model",
+        language="en",
+    )
+    options = {
+        "output_json_path": output_path,
+        "request": request,
+        "context": "",
+        "forced_aligner": "aligner",
+        "dtype": "float16",
+        "draft_model": None,
+        "num_draft_tokens": 4,
+    }
+    output_path.write_text("{truncated", encoding="utf-8")
+    assert _load_reusable_qwen_payload(**options) is None
+
+    write_json(
+        output_path,
+        {
+            "segments": [],
+            "_voxcraft": _qwen_payload_marker(
+                request=request,
+                context="",
+                forced_aligner="aligner",
+                dtype="float16",
+                draft_model=None,
+                num_draft_tokens=4,
+            ),
+        },
+    )
+    audio_path.write_bytes(b"RIFF-changed")
+    assert _load_reusable_qwen_payload(**options) is None
 
 
 def test_qwen_transcription_reuses_saved_payload_for_diarization_retry(monkeypatch, tmp_path: Path) -> None:
