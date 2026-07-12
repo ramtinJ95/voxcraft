@@ -201,10 +201,18 @@ def _transcribe_with_qwen3_asr(
             draft_model=draft_model,
             num_draft_tokens=num_draft_tokens,
         )
+        _write_qwen_payload(output_json_path, payload)
+        _append_optional_log(log_path, f"Saved raw qwen3-asr output to {output_json_path.name}")
     else:
         _append_optional_log(log_path, f"Reusing saved qwen3-asr output from {output_json_path.name}")
 
     if diarize:
+        payload.pop("speaker_segments", None)
+        raw_segments = payload.get("segments")
+        if isinstance(raw_segments, list):
+            for item in raw_segments:
+                if isinstance(item, dict):
+                    item.pop("speaker", None)
         _append_optional_log(log_path, "Starting pyannote diarization")
         speaker_segments, labeled_word_segments = _diarize_qwen_payload_with_pyannote(
             audio_path=request.input_path,
@@ -219,9 +227,8 @@ def _transcribe_with_qwen3_asr(
         if speaker_segments:
             payload["speaker_segments"] = speaker_segments
         _append_optional_log(log_path, "Finished pyannote diarization")
-
-    output_json_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    _append_optional_log(log_path, f"Saved qwen3-asr output to {output_json_path.name}")
+        _write_qwen_payload(output_json_path, payload)
+        _append_optional_log(log_path, f"Saved diarized qwen3-asr output to {output_json_path.name}")
 
     language = str(payload.get("language") or request.language or "")
     speaker_segments = payload.get("speaker_segments")
@@ -255,7 +262,10 @@ def _load_reusable_qwen_payload(
 ) -> dict[str, object] | None:
     if not output_json_path.exists():
         return None
-    payload = json.loads(output_json_path.read_text(encoding="utf-8"))
+    try:
+        payload = json.loads(output_json_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
     if not isinstance(payload, dict):
         return None
     marker = payload.get("_voxcraft")
@@ -310,6 +320,8 @@ def _qwen_payload_marker(
         "draft_model": draft_model,
         "forced_aligner": forced_aligner,
         "input_path": str(request.input_path.resolve()),
+        "input_size": request.input_path.stat().st_size,
+        "input_mtime_ns": request.input_path.stat().st_mtime_ns,
         "language": request.language or None,
         "model": request.model,
         "num_draft_tokens": num_draft_tokens,
@@ -522,7 +534,7 @@ def _segments_from_qwen_payload(
             for item in raw_speaker_segments
             if normalize_transcript_text(str(item.get("text", "")))
         ]
-        return _merge_adjacent_segments(segments)
+        return _merge_adjacent_segments(segments, language=language)
 
     raw_segments = payload.get("segments")
     if not isinstance(raw_segments, list):
@@ -604,12 +616,13 @@ def _group_qwen_word_segments(
         )
         for group in groups
     ]
-    return _merge_adjacent_segments(segments)
+    return _merge_adjacent_segments(segments, language=language)
 
 
 def _merge_adjacent_segments(
     segments: list[TranscriptSegment],
     max_gap_sec: float = 0.35,
+    language: str | None = None,
 ) -> list[TranscriptSegment]:
     if not segments:
         return []
@@ -626,12 +639,21 @@ def _merge_adjacent_segments(
             merged[-1] = TranscriptSegment(
                 start_sec=previous.start_sec,
                 end_sec=segment.end_sec,
-                text=join_transcript_tokens([previous.text, segment.text]),
+                text=join_transcript_tokens([previous.text, segment.text], language=language),
                 speaker=previous.speaker,
             )
             continue
         merged.append(segment)
     return merged
+
+
+def _write_qwen_payload(path: Path, payload: dict[str, object]) -> None:
+    temporary_path = path.with_suffix(f"{path.suffix}.tmp")
+    temporary_path.write_text(
+        json.dumps(payload, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    temporary_path.replace(path)
 
 
 def _ends_sentence(text: str) -> bool:
