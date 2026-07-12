@@ -60,6 +60,19 @@ def test_choose_subtitle_candidate_can_prefer_explicit_language() -> None:
     assert candidate.language == "es"
 
 
+def test_choose_subtitle_candidate_falls_back_to_any_creator_language() -> None:
+    candidate = choose_subtitle_candidate(
+        subtitles={
+            "sv": [{"ext": "vtt", "url": "https://example.com/sv.vtt"}],
+            "fr": [{"ext": "vtt", "url": "https://example.com/fr.vtt"}],
+        },
+        preferred_language="en",
+    )
+
+    assert candidate is not None
+    assert candidate.language == "fr"
+
+
 def test_choose_subtitle_candidate_ignores_auto_captions_by_default() -> None:
     candidate = choose_subtitle_candidate(
         subtitles={},

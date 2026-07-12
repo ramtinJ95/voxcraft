@@ -9,6 +9,7 @@ from .chunk import chunk_segments, write_chunk_index, write_chunks
 from .config import PipelineConfig
 from .download import (
     choose_subtitle_candidate,
+    choose_subtitle_language,
     download_audio_file,
     download_subtitle_file,
     probe_video,
@@ -403,12 +404,14 @@ def _cached_requested_source_plan(
     if not subtitle_languages:
         return SourceKind.LOCAL_ASR, None
 
-    preferred_language = (language or config.language_preference).lower()
-    language_order = ("en", preferred_language) if language is None else (preferred_language, "en")
-    for candidate_language in language_order:
-        if candidate_language and candidate_language in subtitle_languages:
-            return SourceKind.MANUAL_SUBTITLES, candidate_language
-    return SourceKind.LOCAL_ASR, None
+    subtitle_language = choose_subtitle_language(
+        subtitle_languages,
+        preferred_language=language or config.language_preference,
+        prefer_english=language is None,
+    )
+    if subtitle_language is None:
+        return SourceKind.LOCAL_ASR, None
+    return SourceKind.MANUAL_SUBTITLES, subtitle_language
 
 
 def _cached_subtitle_languages(metadata_payload: dict[str, object]) -> set[str]:

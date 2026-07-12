@@ -66,8 +66,6 @@ def choose_subtitle_candidate(
     prefer_english: bool = True,
 ) -> SubtitleCandidate | None:
     subtitles = subtitles or {}
-    preferred_language = preferred_language.lower()
-
     def best_track(
         language: str,
         tracks: list[dict[str, Any] | SubtitleCandidate] | None,
@@ -83,18 +81,32 @@ def choose_subtitle_candidate(
         )
         return ranked_tracks[0]
 
-    language_order = ("en", preferred_language) if prefer_english else (preferred_language, "en")
-    ordered_languages: list[str] = []
-    for language in language_order:
-        if language and language not in ordered_languages:
-            ordered_languages.append(language)
+    language = choose_subtitle_language(
+        subtitles,
+        preferred_language=preferred_language,
+        prefer_english=prefer_english,
+    )
+    return best_track(language, subtitles.get(language), is_automatic=False) if language else None
 
-    for language in ordered_languages:
-        candidate = best_track(language, subtitles.get(language), is_automatic=False)
-        if candidate is not None:
-            return candidate
 
-    return None
+def choose_subtitle_language(
+    subtitles: dict[str, object] | set[str],
+    *,
+    preferred_language: str = "en",
+    prefer_english: bool = True,
+) -> str | None:
+    available_languages = subtitles.keys() if isinstance(subtitles, dict) else subtitles
+    normalized_languages = {
+        language.lower(): language
+        for language in sorted(available_languages)
+        if language
+    }
+    preferred_language = preferred_language.lower()
+    preferred_order = ("en", preferred_language) if prefer_english else (preferred_language, "en")
+    for language in preferred_order:
+        if language in normalized_languages:
+            return normalized_languages[language]
+    return normalized_languages[min(normalized_languages)] if normalized_languages else None
 
 
 def _coerce_subtitle_track(
