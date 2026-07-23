@@ -31,6 +31,7 @@ from voxcraft.subtitles import load_segments, write_transcript_artifacts
 from voxcraft.summarize import _build_summary_command, summarize_video, wrap_markdown_text
 from voxcraft.transcribe import (
     TranscriptionRequest,
+    TranscriptionResult,
     _load_reusable_qwen_payload,
     _qwen_payload_marker,
     resolve_whisper_cpp_model_path,
@@ -87,6 +88,24 @@ def test_choose_subtitle_candidate_skips_languages_without_tracks() -> None:
             "sv": [{"ext": "vtt", "url": "https://example.com/sv.vtt"}],
         },
         preferred_language="en",
+    )
+
+    assert candidate is not None
+    assert candidate.language == "sv"
+
+
+def test_choose_subtitle_candidate_never_uses_live_chat() -> None:
+    assert choose_subtitle_candidate(
+        subtitles={
+            "live_chat": [{"ext": "json", "url": "https://example.com/live-chat"}],
+        },
+    ) is None
+
+    candidate = choose_subtitle_candidate(
+        subtitles={
+            "live_chat": [{"ext": "json", "url": "https://example.com/live-chat"}],
+            "sv": [{"ext": "vtt", "url": "https://example.com/sv.vtt"}],
+        },
     )
 
     assert candidate is not None
@@ -341,6 +360,64 @@ def test_process_video_dry_run_uses_upload_date_in_new_workspace_name(monkeypatc
     assert result.artifact_root == (
         tmp_path / "videos" / "2026-06-11--dated-test-video--dated123"
     )
+
+
+def test_process_video_falls_back_to_asr_when_subtitle_parsing_fails(monkeypatch, tmp_path: Path) -> None:
+    metadata = VideoMetadata(
+        video_id="broken-subs",
+        url="https://www.youtube.com/watch?v=broken-subs",
+        title="Broken Subtitles",
+        subtitles={
+            "en": [SubtitleCandidate(language="en", ext="vtt", url="https://example.com/en.vtt")],
+        },
+    )
+
+    monkeypatch.setattr(
+        "voxcraft.pipeline.probe_video",
+        lambda url: (metadata, {"id": metadata.video_id, "webpage_url": metadata.url}),
+    )
+
+    def fake_download_subtitle_file(*, source_dir: Path, **kwargs) -> Path:
+        path = source_dir / "subtitles.en.vtt"
+        write_text(path, "not a VTT file\n")
+        return path
+
+    def fake_download_audio_file(*, source_dir: Path, **kwargs) -> Path:
+        path = source_dir / "audio.m4a"
+        path.write_bytes(b"audio")
+        return path
+
+    def fake_normalize_audio(*, output_path: Path, **kwargs) -> None:
+        output_path.write_bytes(b"wav")
+
+    def fake_transcribe_audio_file(**kwargs) -> TranscriptionResult:
+        return TranscriptionResult(
+            text="ASR fallback worked.",
+            language="en",
+            segments=[TranscriptSegment(start_sec=0.0, end_sec=1.0, text="ASR fallback worked.")],
+            details=TranscriptionDetails(
+                backend="qwen3-asr",
+                model="mlx-community/Qwen3-ASR-1.7B-8bit",
+                language="en",
+            ),
+        )
+
+    monkeypatch.setattr("voxcraft.pipeline.download_subtitle_file", fake_download_subtitle_file)
+    monkeypatch.setattr("voxcraft.pipeline.parse_subtitle_file", lambda path: (_ for _ in ()).throw(ValueError("Invalid format")))
+    monkeypatch.setattr("voxcraft.pipeline.download_audio_file", fake_download_audio_file)
+    monkeypatch.setattr("voxcraft.pipeline.normalize_audio", fake_normalize_audio)
+    monkeypatch.setattr("voxcraft.pipeline.transcribe_audio_file", fake_transcribe_audio_file)
+
+    result = process_video(
+        url=metadata.url,
+        config=PipelineConfig(base_data_dir=tmp_path / "videos"),
+    )
+
+    assert result.source_kind == SourceKind.LOCAL_ASR
+    assert result.subtitle_path is None
+    assert any("falling back to local ASR" in note for note in result.notes)
+    assert "ASR fallback worked." in (result.artifact_root / "transcript" / "clean.txt").read_text(encoding="utf-8")
+    assert "ValueError: Invalid format" in (result.artifact_root / "logs" / "pipeline.log").read_text(encoding="utf-8")
 
 
 def test_process_video_reuses_cached_subtitle_artifacts_without_probe(monkeypatch, tmp_path: Path) -> None:

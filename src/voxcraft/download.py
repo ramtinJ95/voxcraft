@@ -19,6 +19,7 @@ EXTENSION_PRIORITY = {
     "srv3": 2,
     "ttml": 3,
 }
+IGNORED_SUBTITLE_LANGUAGES = {"live_chat"}
 DIRECT_SUBTITLE_TIMEOUT_SEC = 30
 
 
@@ -104,7 +105,7 @@ def choose_subtitle_language(
     normalized_languages = {
         language.lower(): language
         for language in sorted(available_languages)
-        if language
+        if language and language.lower() not in IGNORED_SUBTITLE_LANGUAGES
     }
     preferred_language = preferred_language.lower()
     preferred_order = ("en", preferred_language) if prefer_english else (preferred_language, "en")

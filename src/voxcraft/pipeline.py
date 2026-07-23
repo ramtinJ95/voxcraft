@@ -138,23 +138,38 @@ def process_video(
 
     if candidate is not None:
         append_log(paths.pipeline_log_path, f"Attempting subtitle-first processing with {candidate.language}")
-        subtitle_path = download_subtitle_file(
-            url=metadata.url,
-            source_dir=paths.source_dir,
-            candidate=candidate,
-            force=force,
-        )
-        segments = parse_subtitle_file(subtitle_path)
-        if segments:
-            source_kind = SourceKind.MANUAL_SUBTITLES
-            subtitle_language = candidate.language
-            write_transcript_artifacts(paths, segments)
-            notes.append(_planned_note(candidate, metadata))
-            append_log(paths.pipeline_log_path, f"Subtitle branch succeeded with {subtitle_path.name}")
-        else:
-            notes.append("Subtitle file was empty after parsing; falling back to local ASR.")
-            append_log(paths.pipeline_log_path, "Subtitle parse returned no segments; falling back to ASR")
+        try:
+            subtitle_path = download_subtitle_file(
+                url=metadata.url,
+                source_dir=paths.source_dir,
+                candidate=candidate,
+                force=force,
+            )
+            segments = parse_subtitle_file(subtitle_path)
+        except Exception as exc:
+            subtitle_path = None
+            notes.append(
+                f"Creator-provided subtitles in {candidate.language} could not be used; "
+                "falling back to local ASR."
+            )
+            append_log(
+                paths.pipeline_log_path,
+                f"Subtitle branch failed for {candidate.language}; falling back to ASR: "
+                f"{type(exc).__name__}: {exc}",
+            )
             source_kind = SourceKind.LOCAL_ASR
+        else:
+            if segments:
+                source_kind = SourceKind.MANUAL_SUBTITLES
+                subtitle_language = candidate.language
+                write_transcript_artifacts(paths, segments)
+                notes.append(_planned_note(candidate, metadata))
+                append_log(paths.pipeline_log_path, f"Subtitle branch succeeded with {subtitle_path.name}")
+            else:
+                subtitle_path = None
+                notes.append("Subtitle file was empty after parsing; falling back to local ASR.")
+                append_log(paths.pipeline_log_path, "Subtitle parse returned no segments; falling back to ASR")
+                source_kind = SourceKind.LOCAL_ASR
     else:
         source_kind = SourceKind.LOCAL_ASR
 
