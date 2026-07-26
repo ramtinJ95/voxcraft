@@ -30,7 +30,7 @@ from .models import (
 )
 from .subtitles import load_segments, parse_subtitle_file, write_transcript_artifacts
 from .transcribe import build_transcription_request, transcribe_audio_file
-from .utils import append_log, extract_youtube_id, path_string, read_json
+from .utils import append_log, extract_youtube_id, path_string, read_json, write_json
 
 
 def process_video(
@@ -232,10 +232,7 @@ def process_video(
             diarization_max_speakers=diarization_max_speakers,
         )
         if transcription_result.speaker_segments:
-            paths.speaker_segments_path.write_text(
-                json_dumps(transcription_result.speaker_segments),
-                encoding="utf-8",
-            )
+            write_json(paths.speaker_segments_path, transcription_result.speaker_segments)
         elif paths.speaker_segments_path.exists():
             paths.speaker_segments_path.unlink()
         write_transcript_artifacts(
@@ -739,7 +736,3 @@ def _resolve_artifact_path(paths, summary: SummaryPayload | None, key: str) -> P
     if not relative:
         return None
     return paths.root_dir / relative
-
-
-def json_dumps(payload: object) -> str:
-    return json.dumps(payload, indent=2, ensure_ascii=False) + "\n"

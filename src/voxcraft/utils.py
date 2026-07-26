@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import secrets
+import stat
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -14,8 +17,7 @@ def ensure_directory(path: Path) -> Path:
 
 
 def write_json(path: Path, payload: dict[str, Any] | list[Any]) -> None:
-    ensure_directory(path.parent)
-    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    write_text(path, json.dumps(payload, indent=2, ensure_ascii=False) + "\n")
 
 
 def read_json(path: Path) -> Any:
@@ -23,8 +25,51 @@ def read_json(path: Path) -> Any:
 
 
 def write_text(path: Path, content: str) -> None:
+    write_bytes(path, content.encode("utf-8"))
+
+
+def write_bytes(path: Path, content: bytes) -> None:
     ensure_directory(path.parent)
-    path.write_text(content, encoding="utf-8")
+    descriptor, temporary_path = _open_temporary_sibling(path)
+    try:
+        with os.fdopen(descriptor, "wb") as handle:
+            descriptor = -1
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary_path, path)
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        temporary_path.unlink(missing_ok=True)
+
+
+def _open_temporary_sibling(path: Path) -> tuple[int, Path]:
+    existing_mode: int | None = None
+    try:
+        existing_mode = stat.S_IMODE(path.stat().st_mode)
+    except FileNotFoundError:
+        pass
+
+    for _ in range(10):
+        temporary_path = path.with_name(f".{path.name}.{secrets.token_hex(8)}.tmp")
+        try:
+            descriptor = os.open(
+                temporary_path,
+                os.O_CREAT | os.O_EXCL | os.O_WRONLY,
+                0o666,
+            )
+        except FileExistsError:
+            continue
+        try:
+            if existing_mode is not None:
+                os.fchmod(descriptor, existing_mode)
+        except Exception:
+            os.close(descriptor)
+            temporary_path.unlink(missing_ok=True)
+            raise
+        return descriptor, temporary_path
+    raise RuntimeError(f"Unable to create a temporary file beside {path}")
 
 
 def append_log(path: Path, message: str) -> None:

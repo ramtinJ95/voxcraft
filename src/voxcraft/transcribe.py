@@ -16,7 +16,7 @@ from pydantic import BaseModel
 from .clean import join_transcript_tokens, normalize_transcript_text
 from .config import PipelineConfig
 from .models import TranscriptSegment, TranscriptionDetails
-from .utils import append_log
+from .utils import append_log, write_json
 
 MODEL_FILE_EXTENSIONS = (".bin", ".gguf")
 DEFAULT_SPEAKER_LABEL = "SPEAKER_00"
@@ -650,12 +650,7 @@ def _merge_adjacent_segments(
 
 
 def _write_qwen_payload(path: Path, payload: dict[str, object]) -> None:
-    temporary_path = path.with_suffix(f"{path.suffix}.tmp")
-    temporary_path.write_text(
-        json.dumps(payload, indent=2, ensure_ascii=False) + "\n",
-        encoding="utf-8",
-    )
-    temporary_path.replace(path)
+    write_json(path, payload)
 
 
 def _file_sha256(path: Path) -> str:
