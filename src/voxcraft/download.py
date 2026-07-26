@@ -11,7 +11,7 @@ from yt_dlp.utils import DownloadError
 
 from .models import SubtitleCandidate
 from .models import VideoMetadata
-from .utils import append_log, write_json
+from .utils import append_log, write_bytes, write_json
 
 EXTENSION_PRIORITY = {
     "vtt": 0,
@@ -191,8 +191,6 @@ def download_subtitle_file(
 
     target = source_dir / f"subtitles.{candidate.language}{downloaded.suffix.lower()}"
     if downloaded != target:
-        if target.exists():
-            target.unlink()
         downloaded.replace(target)
     return target
 
@@ -202,7 +200,7 @@ def _download_direct_subtitle(source_dir: Path, candidate: SubtitleCandidate) ->
         raise RuntimeError(f"No direct subtitle URL is available for {candidate.language}.")
     direct_path = source_dir / f"subtitles.{candidate.language}.{_preferred_subtitle_suffix(candidate)}"
     with urlopen(candidate.url, timeout=DIRECT_SUBTITLE_TIMEOUT_SEC) as response:
-        direct_path.write_bytes(response.read())
+        write_bytes(direct_path, response.read())
     return direct_path
 
 
