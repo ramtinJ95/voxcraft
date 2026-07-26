@@ -28,7 +28,13 @@ from voxcraft.models import SourceKind, SubtitleCandidate, TranscriptSegment, Tr
 from voxcraft.pipeline import _cached_subtitle_languages, _transcription_details_match, process_video, rechunk_video
 from voxcraft.qwen_cli import apply_mlx_qwen3_asr_patch
 from voxcraft.subtitles import load_segments, write_transcript_artifacts
-from voxcraft.summarize import _build_summary_command, summarize_video, wrap_markdown_text
+from voxcraft.summarize import (
+    SummaryOutputKind,
+    _build_summary_command,
+    run_summary_cli,
+    summarize_video,
+    wrap_markdown_text,
+)
 from voxcraft.transcribe import (
     TranscriptionRequest,
     TranscriptionResult,
@@ -1500,6 +1506,171 @@ def test_build_summary_command_for_pi_uses_print_mode_and_thinking_level() -> No
     ]
 
 
+def test_run_summary_cli_preserves_existing_output_when_provider_writes_nothing(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    output_path = tmp_path / "chunk.md"
+    output_path.write_text("existing summary\n", encoding="utf-8")
+    monkeypatch.setattr("voxcraft.summarize.shutil.which", lambda command: f"/usr/bin/{command}")
+    monkeypatch.setattr(
+        "voxcraft.summarize.subprocess.run",
+        lambda *args, **kwargs: SimpleNamespace(returncode=0, stdout="", stderr=""),
+    )
+
+    with pytest.raises(RuntimeError, match="completed without writing summary output"):
+        run_summary_cli(
+            prompt="prompt",
+            output_path=output_path,
+            workdir=tmp_path,
+            provider="codex",
+            command="codex",
+            output_kind="chunk",
+        )
+
+    assert output_path.read_text(encoding="utf-8") == "existing summary\n"
+    assert list(tmp_path.glob(".chunk.md.*")) == []
+
+
+def test_run_summary_cli_preserves_existing_output_when_provider_fails(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    output_path = tmp_path / "chunk.md"
+    output_path.write_text("existing summary\n", encoding="utf-8")
+    monkeypatch.setattr("voxcraft.summarize.shutil.which", lambda command: f"/usr/bin/{command}")
+
+    def fake_run(command, **kwargs):
+        staged_output = Path(command[command.index("-o") + 1])
+        staged_output.write_text("partial replacement\n", encoding="utf-8")
+        return SimpleNamespace(returncode=1, stdout="", stderr="provider failed")
+
+    monkeypatch.setattr("voxcraft.summarize.subprocess.run", fake_run)
+
+    with pytest.raises(RuntimeError, match="provider failed"):
+        run_summary_cli(
+            prompt="prompt",
+            output_path=output_path,
+            workdir=tmp_path,
+            provider="codex",
+            command="codex",
+            output_kind="chunk",
+        )
+
+    assert output_path.read_text(encoding="utf-8") == "existing summary\n"
+    assert list(tmp_path.glob(".chunk.md.*")) == []
+
+
+@pytest.mark.parametrize(
+    ("rendered", "error_match"),
+    [
+        ("  \n", "produced empty chunk summary output"),
+        ("## Chunk Summary\n\nMissing two sections.\n", "missing required headings"),
+    ],
+)
+def test_run_summary_cli_rejects_invalid_direct_output_without_replacing_existing(
+    monkeypatch,
+    tmp_path: Path,
+    rendered: str,
+    error_match: str,
+) -> None:
+    output_path = tmp_path / "chunk.md"
+    output_path.write_text("existing summary\n", encoding="utf-8")
+    monkeypatch.setattr("voxcraft.summarize.shutil.which", lambda command: f"/usr/bin/{command}")
+
+    def fake_run(command, **kwargs):
+        staged_output = Path(command[command.index("-o") + 1])
+        staged_output.write_text(rendered, encoding="utf-8")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr("voxcraft.summarize.subprocess.run", fake_run)
+
+    with pytest.raises(RuntimeError, match=error_match):
+        run_summary_cli(
+            prompt="prompt",
+            output_path=output_path,
+            workdir=tmp_path,
+            provider="codex",
+            command="codex",
+            output_kind="chunk",
+        )
+
+    assert output_path.read_text(encoding="utf-8") == "existing summary\n"
+    assert list(tmp_path.glob(".chunk.md.*")) == []
+
+
+@pytest.mark.parametrize(
+    ("output_kind", "rendered"),
+    [
+        (
+            "chunk",
+            "## Chunk Summary\n\nSummary.\n\n## Key Points\n- Point\n\n## Notable Details\n- Detail\n",
+        ),
+        (
+            "final",
+            "# Final Summary\n\nSummary.\n\n## Main Takeaways\n- Point\n\n## Timeline\n- Event\n\n"
+            "## Open Questions Or Uncertainties\n- None.\n",
+        ),
+    ],
+)
+def test_run_summary_cli_publishes_valid_direct_output(
+    monkeypatch,
+    tmp_path: Path,
+    output_kind: SummaryOutputKind,
+    rendered: str,
+) -> None:
+    output_path = tmp_path / "summary.md"
+    output_path.write_text("existing summary\n", encoding="utf-8")
+    monkeypatch.setattr("voxcraft.summarize.shutil.which", lambda command: f"/usr/bin/{command}")
+
+    def fake_run(command, **kwargs):
+        staged_output = Path(command[command.index("-o") + 1])
+        assert staged_output != output_path
+        staged_output.write_text(rendered, encoding="utf-8")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr("voxcraft.summarize.subprocess.run", fake_run)
+
+    result = run_summary_cli(
+        prompt="prompt",
+        output_path=output_path,
+        workdir=tmp_path,
+        provider="codex",
+        command="codex",
+        output_kind=output_kind,
+    )
+
+    assert result == rendered.strip()
+    assert output_path.read_text(encoding="utf-8") == rendered
+    assert list(tmp_path.glob(".summary.md.*")) == []
+
+
+def test_run_summary_cli_preserves_existing_output_when_stdout_is_empty(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    output_path = tmp_path / "chunk.md"
+    output_path.write_text("existing summary\n", encoding="utf-8")
+    monkeypatch.setattr("voxcraft.summarize.shutil.which", lambda command: f"/usr/bin/{command}")
+    monkeypatch.setattr(
+        "voxcraft.summarize.subprocess.run",
+        lambda *args, **kwargs: SimpleNamespace(returncode=0, stdout="  \n", stderr=""),
+    )
+
+    with pytest.raises(RuntimeError, match="did not produce any text"):
+        run_summary_cli(
+            prompt="prompt",
+            output_path=output_path,
+            workdir=tmp_path,
+            provider="pi",
+            command="pi",
+            output_kind="chunk",
+        )
+
+    assert output_path.read_text(encoding="utf-8") == "existing summary\n"
+    assert list(tmp_path.glob(".chunk.md.*")) == []
+
+
 def test_summarize_video_writes_chunk_and_final_outputs(monkeypatch, tmp_path: Path) -> None:
     paths = initialize_workspace(build_artifact_paths(tmp_path / "video123", "video123"))
     metadata = VideoMetadata(
@@ -1552,6 +1723,7 @@ def test_summarize_video_writes_chunk_and_final_outputs(monkeypatch, tmp_path: P
         workdir: Path,
         provider: str,
         command: str,
+        output_kind: str,
         model: str | None = None,
         thinking_level: str | None = None,
     ) -> str:
@@ -1559,6 +1731,7 @@ def test_summarize_video_writes_chunk_and_final_outputs(monkeypatch, tmp_path: P
             {
                 "provider": provider,
                 "command": command,
+                "output_kind": output_kind,
                 "model": model,
                 "thinking_level": thinking_level,
             }
@@ -1597,12 +1770,14 @@ def test_summarize_video_writes_chunk_and_final_outputs(monkeypatch, tmp_path: P
         {
             "provider": "codex",
             "command": "codex",
+            "output_kind": "chunk",
             "model": "gpt-5.5",
             "thinking_level": "high",
         },
         {
             "provider": "codex",
             "command": "codex",
+            "output_kind": "final",
             "model": "gpt-5.5",
             "thinking_level": "high",
         },
@@ -1709,6 +1884,7 @@ def test_summarize_video_reruns_when_summary_settings_change(monkeypatch, tmp_pa
         workdir: Path,
         provider: str,
         command: str,
+        output_kind: str,
         model: str | None = None,
         thinking_level: str | None = None,
     ) -> str:
@@ -1833,6 +2009,7 @@ def test_summarize_video_reruns_when_chunk_content_changes(monkeypatch, tmp_path
         workdir: Path,
         provider: str,
         command: str,
+        output_kind: str,
         model: str | None = None,
         thinking_level: str | None = None,
     ) -> str:

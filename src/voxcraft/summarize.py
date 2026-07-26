@@ -4,8 +4,10 @@ import hashlib
 import re
 import shutil
 import subprocess
+import tempfile
 import textwrap
 from pathlib import Path
+from typing import Literal
 
 from .config import PipelineConfig, normalize_summary_provider
 from .manifest import initialize_workspace, resolve_artifact_paths
@@ -25,6 +27,20 @@ SUMMARY_STDIN_DIRECTIVE = "Follow the piped prompt exactly and output only the r
 FENCE_PATTERN = re.compile(r"^\s*(```|~~~)")
 LIST_ITEM_PATTERN = re.compile(r"^(\s*)([-*+]|\d+\.)\s+(.*)$")
 BLOCKQUOTE_PATTERN = re.compile(r"^(\s*>\s?)(.*)$")
+SummaryOutputKind = Literal["chunk", "final"]
+REQUIRED_SUMMARY_HEADINGS: dict[SummaryOutputKind, tuple[str, ...]] = {
+    "chunk": (
+        "## Chunk Summary",
+        "## Key Points",
+        "## Notable Details",
+    ),
+    "final": (
+        "# Final Summary",
+        "## Main Takeaways",
+        "## Timeline",
+        "## Open Questions Or Uncertainties",
+    ),
+}
 
 
 def summarize_video(
@@ -98,6 +114,7 @@ def summarize_video(
                 workdir=paths.root_dir,
                 provider=summary_provider,
                 command=summary_command,
+                output_kind="chunk",
                 model=summary_model,
                 thinking_level=summary_thinking_level,
             )
@@ -141,6 +158,7 @@ def summarize_video(
             workdir=paths.root_dir,
             provider=summary_provider,
             command=summary_command,
+            output_kind="final",
             model=summary_model,
             thinking_level=summary_thinking_level,
         )
@@ -271,6 +289,7 @@ def run_summary_cli(
     workdir: Path,
     provider: str,
     command: str,
+    output_kind: SummaryOutputKind,
     model: str | None = None,
     thinking_level: str | None = None,
 ) -> str:
@@ -279,41 +298,81 @@ def run_summary_cli(
         raise RuntimeError(f"{command} is not available on PATH.")
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    cli_command, writes_to_stdout = _build_summary_command(
-        provider=normalized_provider,
-        command=command,
-        model=model,
-        thinking_level=thinking_level,
-        workdir=workdir,
-        output_path=output_path,
-    )
-
-    completed = subprocess.run(
-        cli_command,
-        cwd=workdir,
-        input=prompt,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if completed.returncode != 0:
-        provider_label = _summary_provider_label(normalized_provider)
-        error_text = (
-            completed.stderr.strip()
-            or completed.stdout.strip()
-            or f"{provider_label} exited with a non-zero status."
+    with tempfile.TemporaryDirectory(
+        prefix=f".{output_path.name}.",
+        dir=output_path.parent,
+    ) as temporary_dir:
+        staged_output_path = Path(temporary_dir) / output_path.name
+        cli_command, writes_to_stdout = _build_summary_command(
+            provider=normalized_provider,
+            command=command,
+            model=model,
+            thinking_level=thinking_level,
+            workdir=workdir,
+            output_path=staged_output_path,
         )
-        raise RuntimeError(error_text)
-    if writes_to_stdout:
-        rendered = completed.stdout.strip()
-        if not rendered:
-            raise RuntimeError(
-                completed.stderr.strip() or f"{_summary_provider_label(normalized_provider)} did not produce any text."
+
+        completed = subprocess.run(
+            cli_command,
+            cwd=workdir,
+            input=prompt,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if completed.returncode != 0:
+            provider_label = _summary_provider_label(normalized_provider)
+            error_text = (
+                completed.stderr.strip()
+                or completed.stdout.strip()
+                or f"{provider_label} exited with a non-zero status."
             )
-        write_text(output_path, rendered + "\n")
-    if not output_path.exists():
-        raise RuntimeError(f"{_summary_provider_label(normalized_provider)} completed without writing {output_path}")
-    return output_path.read_text(encoding="utf-8").strip()
+            raise RuntimeError(error_text)
+        if writes_to_stdout:
+            rendered = completed.stdout.strip()
+            if not rendered:
+                raise RuntimeError(
+                    completed.stderr.strip()
+                    or f"{_summary_provider_label(normalized_provider)} did not produce any text."
+                )
+            write_text(staged_output_path, rendered + "\n")
+        if not staged_output_path.exists():
+            raise RuntimeError(
+                f"{_summary_provider_label(normalized_provider)} completed without writing summary output."
+            )
+
+        rendered = staged_output_path.read_text(encoding="utf-8").strip()
+        _validate_summary_output(
+            rendered,
+            output_kind=output_kind,
+            provider=normalized_provider,
+        )
+        staged_output_path.replace(output_path)
+        return rendered
+
+
+def _validate_summary_output(
+    content: str,
+    *,
+    output_kind: SummaryOutputKind,
+    provider: str,
+) -> None:
+    provider_label = _summary_provider_label(provider)
+    if not content:
+        raise RuntimeError(f"{provider_label} produced empty {output_kind} summary output.")
+
+    headings = {line.strip() for line in content.splitlines()}
+    missing_headings = [
+        heading
+        for heading in REQUIRED_SUMMARY_HEADINGS[output_kind]
+        if heading not in headings
+    ]
+    if missing_headings:
+        missing = ", ".join(missing_headings)
+        raise RuntimeError(
+            f"{provider_label} produced invalid {output_kind} summary output; "
+            f"missing required headings: {missing}."
+        )
 
 
 def _build_summary_command(
