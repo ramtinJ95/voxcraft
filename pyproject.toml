@@ -16,7 +16,7 @@ dependencies = [
   "typer>=0.12",
   "uvicorn[standard]>=0.30",
   "webvtt-py",
-  "yt-dlp",
+  "yt-dlp[default]>=2026.7.4",
 ]
 
 [project.scripts]
