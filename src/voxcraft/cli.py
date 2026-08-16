@@ -197,6 +197,7 @@ def doctor(ctx: typer.Context) -> None:
     resolved_qwen_command = describe_qwen_command(config.qwen_command)
     command_rows = [
         ("ffmpeg", shutil.which("ffmpeg"), "required for audio normalization and local ASR", True),
+        ("node", shutil.which("node"), "required by yt-dlp for YouTube JavaScript challenges", True),
         (
             "voxcraft-qwen",
             resolved_qwen_command or f"{Path(sys.executable).resolve()} -m voxcraft.qwen_cli",
@@ -260,6 +261,7 @@ def doctor(ctx: typer.Context) -> None:
     console.print(f"Default summary provider: {config.summary_provider}")
     console.print("Notes:")
     console.print("- The transcript pipeline is local; summarization requires one supported summary CLI.")
+    console.print("- Node is enabled as yt-dlp's JavaScript challenge runtime.")
     console.print("- The yt_dlp Python package is what the runtime uses; the yt-dlp shell command is optional.")
     console.print("- The pyannote token is only required for diarization.")
 

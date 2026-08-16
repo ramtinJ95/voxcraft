@@ -19,6 +19,9 @@ from voxcraft.config import (
 from voxcraft.download import (
     _download_direct_subtitle,
     _find_audio_file,
+    build_audio_download_options,
+    build_probe_options,
+    build_subtitle_download_options,
     choose_subtitle_candidate,
     download_audio_file,
     write_metadata_artifacts,
@@ -228,7 +231,28 @@ def test_download_direct_subtitle_uses_timeout(monkeypatch, tmp_path: Path) -> N
     assert path.read_text(encoding="utf-8") == "WEBVTT\n\n"
 
 
-def test_download_audio_retries_once_and_logs_first_failure(monkeypatch, tmp_path: Path) -> None:
+def test_ytdlp_options_enable_node_for_every_youtube_operation(tmp_path: Path) -> None:
+    options = [
+        build_probe_options(),
+        build_subtitle_download_options("en", tmp_path),
+        build_audio_download_options(tmp_path),
+    ]
+
+    for operation_options in options:
+        assert operation_options["js_runtimes"] == {"node": {"path": None}}
+        assert "no_warnings" not in operation_options
+
+
+def test_ytdlp_warnings_are_written_to_pipeline_log(tmp_path: Path) -> None:
+    log_path = tmp_path / "pipeline.log"
+    options = build_audio_download_options(tmp_path, log_path=log_path)
+
+    options["logger"].warning("JavaScript challenge warning")
+
+    assert "yt-dlp warning: JavaScript challenge warning" in log_path.read_text(encoding="utf-8")
+
+
+def test_download_audio_retries_transient_failure_and_logs_it(monkeypatch, tmp_path: Path) -> None:
     from yt_dlp.utils import DownloadError
 
     source_dir = tmp_path / "source"
@@ -261,12 +285,54 @@ def test_download_audio_retries_once_and_logs_first_failure(monkeypatch, tmp_pat
         "https://www.youtube.com/watch?v=abc123",
         source_dir,
         log_path=log_path,
-        retry_delay_sec=0,
+        retry_delays_sec=(0,),
     )
 
     assert result == source_dir / "audio.webm"
     assert attempts == 2
-    assert "Audio download failed; retrying once" in log_path.read_text(encoding="utf-8")
+    assert "Audio download attempt 1/2 failed; retrying in 0s" in log_path.read_text(encoding="utf-8")
+
+
+def test_download_audio_stops_after_bounded_backoff_retries(monkeypatch, tmp_path: Path) -> None:
+    from yt_dlp.utils import DownloadError
+
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    log_path = tmp_path / "pipeline.log"
+    attempts = 0
+    delays: list[float] = []
+
+    class FakeYoutubeDL:
+        def __init__(self, options):
+            self.options = options
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return None
+
+        def extract_info(self, url: str, download: bool):
+            nonlocal attempts
+            attempts += 1
+            raise DownloadError("HTTP Error 403: Forbidden")
+
+    monkeypatch.setattr("voxcraft.download.YoutubeDL", FakeYoutubeDL)
+    monkeypatch.setattr("voxcraft.download.time.sleep", delays.append)
+
+    with pytest.raises(RuntimeError, match="after 3 attempts"):
+        download_audio_file(
+            "https://www.youtube.com/watch?v=abc123",
+            source_dir,
+            log_path=log_path,
+            retry_delays_sec=(2, 5),
+        )
+
+    assert attempts == 3
+    assert delays == [2, 5]
+    log_text = log_path.read_text(encoding="utf-8")
+    assert "Audio download attempt 1/3 failed; retrying in 2s" in log_text
+    assert "Audio download attempt 2/3 failed; retrying in 5s" in log_text
 
 
 def test_download_audio_force_requests_overwrite(monkeypatch, tmp_path: Path) -> None:
@@ -559,6 +625,7 @@ def test_process_video_reruns_cached_subtitles_for_explicit_language(monkeypatch
         source_dir: Path,
         candidate: SubtitleCandidate,
         force: bool = False,
+        log_path: Path | None = None,
     ) -> Path:
         downloaded_languages.append(candidate.language)
         subtitle_path = source_dir / f"subtitles.{candidate.language}.vtt"

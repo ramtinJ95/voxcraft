@@ -144,6 +144,7 @@ def process_video(
                 source_dir=paths.source_dir,
                 candidate=candidate,
                 force=force,
+                log_path=paths.pipeline_log_path,
             )
             segments = parse_subtitle_file(subtitle_path)
         except Exception as exc:
