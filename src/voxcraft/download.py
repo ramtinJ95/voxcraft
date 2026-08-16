@@ -25,32 +25,51 @@ DEFAULT_AUDIO_RETRY_DELAYS_SEC = (2.0, 5.0)
 
 
 class _YtDlpPipelineLogger:
-    def __init__(self, log_path: Path) -> None:
+    def __init__(
+        self,
+        *,
+        log_path: Path | None = None,
+        diagnostics: list[str] | None = None,
+    ) -> None:
         self.log_path = log_path
+        self.diagnostics = diagnostics
 
     def debug(self, message: str) -> None:
         pass
 
     def warning(self, message: str) -> None:
-        append_log(self.log_path, f"yt-dlp warning: {message}")
+        self._record("warning", message)
 
     def error(self, message: str) -> None:
-        append_log(self.log_path, f"yt-dlp error: {message}")
+        self._record("error", message)
+
+    def _record(self, level: str, message: str) -> None:
+        diagnostic = f"yt-dlp {level}: {message}"
+        if self.log_path is not None:
+            append_log(self.log_path, diagnostic)
+        if self.diagnostics is not None:
+            self.diagnostics.append(diagnostic)
 
 
-def _base_ytdlp_options(log_path: Path | None = None) -> dict[str, Any]:
+def _base_ytdlp_options(
+    log_path: Path | None = None,
+    diagnostics: list[str] | None = None,
+) -> dict[str, Any]:
     options: dict[str, Any] = {
         "quiet": True,
         "js_runtimes": {"node": {"path": None}},
         "noplaylist": True,
     }
-    if log_path is not None:
-        options["logger"] = _YtDlpPipelineLogger(log_path)
+    if log_path is not None or diagnostics is not None:
+        options["logger"] = _YtDlpPipelineLogger(
+            log_path=log_path,
+            diagnostics=diagnostics,
+        )
     return options
 
 
-def build_probe_options() -> dict[str, Any]:
-    return _base_ytdlp_options() | {
+def build_probe_options(diagnostics: list[str] | None = None) -> dict[str, Any]:
+    return _base_ytdlp_options(diagnostics=diagnostics) | {
         "skip_download": True,
         "extract_flat": False,
     }
@@ -152,9 +171,12 @@ def _coerce_subtitle_track(
     )
 
 
-def probe_video(url: str) -> tuple[VideoMetadata, dict[str, Any]]:
+def probe_video(
+    url: str,
+    diagnostics: list[str] | None = None,
+) -> tuple[VideoMetadata, dict[str, Any]]:
     try:
-        with YoutubeDL(build_probe_options()) as ydl:
+        with YoutubeDL(build_probe_options(diagnostics=diagnostics)) as ydl:
             info = ydl.extract_info(url, download=False)
             sanitized = ydl.sanitize_info(info)
     except DownloadError as exc:
