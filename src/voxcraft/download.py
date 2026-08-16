@@ -21,25 +21,66 @@ EXTENSION_PRIORITY = {
 }
 IGNORED_SUBTITLE_LANGUAGES = {"live_chat"}
 DIRECT_SUBTITLE_TIMEOUT_SEC = 30
+DEFAULT_AUDIO_RETRY_DELAYS_SEC = (2.0, 5.0)
 
 
-def build_probe_options() -> dict[str, Any]:
-    return {
+class _YtDlpPipelineLogger:
+    def __init__(
+        self,
+        *,
+        log_path: Path | None = None,
+        diagnostics: list[str] | None = None,
+    ) -> None:
+        self.log_path = log_path
+        self.diagnostics = diagnostics
+
+    def debug(self, message: str) -> None:
+        pass
+
+    def warning(self, message: str) -> None:
+        self._record("warning", message)
+
+    def error(self, message: str) -> None:
+        self._record("error", message)
+
+    def _record(self, level: str, message: str) -> None:
+        diagnostic = f"yt-dlp {level}: {message}"
+        if self.log_path is not None:
+            append_log(self.log_path, diagnostic)
+        if self.diagnostics is not None:
+            self.diagnostics.append(diagnostic)
+
+
+def _base_ytdlp_options(
+    log_path: Path | None = None,
+    diagnostics: list[str] | None = None,
+) -> dict[str, Any]:
+    options: dict[str, Any] = {
         "quiet": True,
-        "no_warnings": True,
+        "js_runtimes": {"node": {"path": None}},
+        "noplaylist": True,
+    }
+    if log_path is not None or diagnostics is not None:
+        options["logger"] = _YtDlpPipelineLogger(
+            log_path=log_path,
+            diagnostics=diagnostics,
+        )
+    return options
+
+
+def build_probe_options(diagnostics: list[str] | None = None) -> dict[str, Any]:
+    return _base_ytdlp_options(diagnostics=diagnostics) | {
         "skip_download": True,
         "extract_flat": False,
-        "noplaylist": True,
     }
 
 
 def build_subtitle_download_options(
     language: str,
     source_dir: Path,
+    log_path: Path | None = None,
 ) -> dict[str, Any]:
-    return {
-        "quiet": True,
-        "no_warnings": True,
+    return _base_ytdlp_options(log_path) | {
         "skip_download": True,
         "writesubtitles": True,
         "writeautomaticsub": False,
@@ -47,18 +88,19 @@ def build_subtitle_download_options(
         "subtitlesformat": "vtt/srt/best",
         "paths": {"home": str(source_dir)},
         "outtmpl": {"default": "%(id)s.%(ext)s"},
-        "noplaylist": True,
     }
 
 
-def build_audio_download_options(source_dir: Path, *, force: bool = False) -> dict[str, Any]:
-    return {
-        "quiet": True,
-        "no_warnings": True,
+def build_audio_download_options(
+    source_dir: Path,
+    *,
+    force: bool = False,
+    log_path: Path | None = None,
+) -> dict[str, Any]:
+    return _base_ytdlp_options(log_path) | {
         "format": "bestaudio/best",
         "paths": {"home": str(source_dir)},
         "outtmpl": {"default": "audio.%(ext)s"},
-        "noplaylist": True,
         "overwrites": force,
     }
 
@@ -129,9 +171,12 @@ def _coerce_subtitle_track(
     )
 
 
-def probe_video(url: str) -> tuple[VideoMetadata, dict[str, Any]]:
+def probe_video(
+    url: str,
+    diagnostics: list[str] | None = None,
+) -> tuple[VideoMetadata, dict[str, Any]]:
     try:
-        with YoutubeDL(build_probe_options()) as ydl:
+        with YoutubeDL(build_probe_options(diagnostics=diagnostics)) as ydl:
             info = ydl.extract_info(url, download=False)
             sanitized = ydl.sanitize_info(info)
     except DownloadError as exc:
@@ -165,6 +210,7 @@ def download_subtitle_file(
     source_dir: Path,
     candidate: SubtitleCandidate,
     force: bool = False,
+    log_path: Path | None = None,
 ) -> Path:
     existing = _find_standardized_subtitle_file(source_dir, candidate.language)
     if existing is not None and not force:
@@ -175,6 +221,7 @@ def download_subtitle_file(
             build_subtitle_download_options(
                 language=candidate.language,
                 source_dir=source_dir,
+                log_path=log_path,
             )
         ) as ydl:
             ydl.extract_info(url, download=True)
@@ -209,23 +256,37 @@ def download_audio_file(
     source_dir: Path,
     force: bool = False,
     log_path: Path | None = None,
-    retry_delay_sec: float = 2.0,
+    retry_delays_sec: tuple[float, ...] = DEFAULT_AUDIO_RETRY_DELAYS_SEC,
 ) -> Path:
     existing = _find_audio_file(source_dir)
     if existing is not None and not force:
         return existing
 
-    for attempt in range(2):
+    max_attempts = len(retry_delays_sec) + 1
+    for attempt in range(max_attempts):
         try:
-            with YoutubeDL(build_audio_download_options(source_dir, force=force)) as ydl:
+            with YoutubeDL(
+                build_audio_download_options(
+                    source_dir,
+                    force=force,
+                    log_path=log_path,
+                )
+            ) as ydl:
                 info = ydl.extract_info(url, download=True)
                 path = _extract_requested_filepath(info)
             break
         except DownloadError as exc:
-            if attempt == 1:
-                raise RuntimeError(f"Failed to download audio after one retry: {exc}") from exc
+            if attempt == max_attempts - 1:
+                raise RuntimeError(
+                    f"Failed to download audio after {max_attempts} attempts: {exc}"
+                ) from exc
+            retry_delay_sec = retry_delays_sec[attempt]
             if log_path is not None:
-                append_log(log_path, f"Audio download failed; retrying once: {exc}")
+                append_log(
+                    log_path,
+                    f"Audio download attempt {attempt + 1}/{max_attempts} failed; "
+                    f"retrying in {retry_delay_sec:g}s: {exc}",
+                )
             time.sleep(retry_delay_sec)
 
     if path is not None and path.exists():

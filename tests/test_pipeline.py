@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from voxcraft.cli import _command_status
+from voxcraft.cli import _command_status, _node_runtime_status
 from voxcraft.config import (
     CONFIG_ENV_VAR,
     PipelineConfig,
@@ -19,8 +19,12 @@ from voxcraft.config import (
 from voxcraft.download import (
     _download_direct_subtitle,
     _find_audio_file,
+    build_audio_download_options,
+    build_probe_options,
+    build_subtitle_download_options,
     choose_subtitle_candidate,
     download_audio_file,
+    probe_video,
     write_metadata_artifacts,
 )
 from voxcraft.manifest import build_artifact_paths, initialize_workspace, resolve_video_root
@@ -228,7 +232,64 @@ def test_download_direct_subtitle_uses_timeout(monkeypatch, tmp_path: Path) -> N
     assert path.read_text(encoding="utf-8") == "WEBVTT\n\n"
 
 
-def test_download_audio_retries_once_and_logs_first_failure(monkeypatch, tmp_path: Path) -> None:
+def test_ytdlp_options_enable_node_for_every_youtube_operation(tmp_path: Path) -> None:
+    options = [
+        build_probe_options(),
+        build_subtitle_download_options("en", tmp_path),
+        build_audio_download_options(tmp_path),
+    ]
+
+    for operation_options in options:
+        assert operation_options["js_runtimes"] == {"node": {"path": None}}
+        assert "no_warnings" not in operation_options
+
+
+def test_ytdlp_warnings_are_written_to_pipeline_log(tmp_path: Path) -> None:
+    log_path = tmp_path / "pipeline.log"
+    options = build_audio_download_options(tmp_path, log_path=log_path)
+
+    options["logger"].warning("JavaScript challenge warning")
+
+    assert "yt-dlp warning: JavaScript challenge warning" in log_path.read_text(encoding="utf-8")
+
+
+def test_probe_video_buffers_ytdlp_diagnostics(monkeypatch) -> None:
+    diagnostics: list[str] = []
+
+    class FakeYoutubeDL:
+        def __init__(self, options):
+            self.options = options
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return None
+
+        def extract_info(self, url: str, download: bool):
+            self.options["logger"].warning("JavaScript runtime warning")
+            return {
+                "id": "abc123",
+                "webpage_url": url,
+                "title": "Probe Test",
+            }
+
+        @staticmethod
+        def sanitize_info(info):
+            return info
+
+    monkeypatch.setattr("voxcraft.download.YoutubeDL", FakeYoutubeDL)
+
+    metadata, _ = probe_video(
+        "https://www.youtube.com/watch?v=abc123",
+        diagnostics=diagnostics,
+    )
+
+    assert metadata.video_id == "abc123"
+    assert diagnostics == ["yt-dlp warning: JavaScript runtime warning"]
+
+
+def test_download_audio_retries_transient_failure_and_logs_it(monkeypatch, tmp_path: Path) -> None:
     from yt_dlp.utils import DownloadError
 
     source_dir = tmp_path / "source"
@@ -261,12 +322,54 @@ def test_download_audio_retries_once_and_logs_first_failure(monkeypatch, tmp_pat
         "https://www.youtube.com/watch?v=abc123",
         source_dir,
         log_path=log_path,
-        retry_delay_sec=0,
+        retry_delays_sec=(0,),
     )
 
     assert result == source_dir / "audio.webm"
     assert attempts == 2
-    assert "Audio download failed; retrying once" in log_path.read_text(encoding="utf-8")
+    assert "Audio download attempt 1/2 failed; retrying in 0s" in log_path.read_text(encoding="utf-8")
+
+
+def test_download_audio_stops_after_bounded_backoff_retries(monkeypatch, tmp_path: Path) -> None:
+    from yt_dlp.utils import DownloadError
+
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    log_path = tmp_path / "pipeline.log"
+    attempts = 0
+    delays: list[float] = []
+
+    class FakeYoutubeDL:
+        def __init__(self, options):
+            self.options = options
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return None
+
+        def extract_info(self, url: str, download: bool):
+            nonlocal attempts
+            attempts += 1
+            raise DownloadError("HTTP Error 403: Forbidden")
+
+    monkeypatch.setattr("voxcraft.download.YoutubeDL", FakeYoutubeDL)
+    monkeypatch.setattr("voxcraft.download.time.sleep", delays.append)
+
+    with pytest.raises(RuntimeError, match="after 3 attempts"):
+        download_audio_file(
+            "https://www.youtube.com/watch?v=abc123",
+            source_dir,
+            log_path=log_path,
+            retry_delays_sec=(2, 5),
+        )
+
+    assert attempts == 3
+    assert delays == [2, 5]
+    log_text = log_path.read_text(encoding="utf-8")
+    assert "Audio download attempt 1/3 failed; retrying in 2s" in log_text
+    assert "Audio download attempt 2/3 failed; retrying in 5s" in log_text
 
 
 def test_download_audio_force_requests_overwrite(monkeypatch, tmp_path: Path) -> None:
@@ -321,7 +424,10 @@ def test_process_video_dry_run_plans_asr_without_subtitles(monkeypatch, tmp_path
         automatic_captions={},
     )
 
-    def fake_probe_video(url: str) -> tuple[VideoMetadata, dict[str, object]]:
+    def fake_probe_video(
+        url: str,
+        diagnostics: list[str] | None = None,
+    ) -> tuple[VideoMetadata, dict[str, object]]:
         return metadata, {"id": metadata.video_id, "webpage_url": metadata.url}
 
     monkeypatch.setattr("voxcraft.pipeline.probe_video", fake_probe_video)
@@ -351,7 +457,10 @@ def test_process_video_dry_run_uses_upload_date_in_new_workspace_name(monkeypatc
         automatic_captions={},
     )
 
-    def fake_probe_video(url: str) -> tuple[VideoMetadata, dict[str, object]]:
+    def fake_probe_video(
+        url: str,
+        diagnostics: list[str] | None = None,
+    ) -> tuple[VideoMetadata, dict[str, object]]:
         return metadata, {"id": metadata.video_id, "webpage_url": metadata.url}
 
     monkeypatch.setattr("voxcraft.pipeline.probe_video", fake_probe_video)
@@ -378,10 +487,15 @@ def test_process_video_falls_back_to_asr_when_subtitle_parsing_fails(monkeypatch
         },
     )
 
-    monkeypatch.setattr(
-        "voxcraft.pipeline.probe_video",
-        lambda url: (metadata, {"id": metadata.video_id, "webpage_url": metadata.url}),
-    )
+    def fake_probe_video(
+        url: str,
+        diagnostics: list[str] | None = None,
+    ) -> tuple[VideoMetadata, dict[str, object]]:
+        if diagnostics is not None:
+            diagnostics.append("yt-dlp warning: probe warning")
+        return metadata, {"id": metadata.video_id, "webpage_url": metadata.url}
+
+    monkeypatch.setattr("voxcraft.pipeline.probe_video", fake_probe_video)
 
     def fake_download_subtitle_file(*, source_dir: Path, **kwargs) -> Path:
         path = source_dir / "subtitles.en.vtt"
@@ -423,7 +537,9 @@ def test_process_video_falls_back_to_asr_when_subtitle_parsing_fails(monkeypatch
     assert result.subtitle_path is None
     assert any("falling back to local ASR" in note for note in result.notes)
     assert "ASR fallback worked." in (result.artifact_root / "transcript" / "clean.txt").read_text(encoding="utf-8")
-    assert "ValueError: Invalid format" in (result.artifact_root / "logs" / "pipeline.log").read_text(encoding="utf-8")
+    pipeline_log = (result.artifact_root / "logs" / "pipeline.log").read_text(encoding="utf-8")
+    assert "Probe diagnostic: yt-dlp warning: probe warning" in pipeline_log
+    assert "ValueError: Invalid format" in pipeline_log
 
 
 def test_process_video_reuses_cached_subtitle_artifacts_without_probe(monkeypatch, tmp_path: Path) -> None:
@@ -475,7 +591,7 @@ def test_process_video_reuses_cached_subtitle_artifacts_without_probe(monkeypatc
         },
     )
 
-    def fail_probe_video(url: str):
+    def fail_probe_video(url: str, diagnostics: list[str] | None = None):
         raise AssertionError("metadata probe should be skipped for compatible cached artifacts")
 
     monkeypatch.setattr("voxcraft.pipeline.probe_video", fail_probe_video)
@@ -551,7 +667,10 @@ def test_process_video_reruns_cached_subtitles_for_explicit_language(monkeypatch
     )
     downloaded_languages: list[str] = []
 
-    def fake_probe_video(url: str) -> tuple[VideoMetadata, dict[str, object]]:
+    def fake_probe_video(
+        url: str,
+        diagnostics: list[str] | None = None,
+    ) -> tuple[VideoMetadata, dict[str, object]]:
         return metadata, {"id": metadata.video_id, "webpage_url": metadata.url}
 
     def fake_download_subtitle_file(
@@ -559,6 +678,7 @@ def test_process_video_reruns_cached_subtitles_for_explicit_language(monkeypatch
         source_dir: Path,
         candidate: SubtitleCandidate,
         force: bool = False,
+        log_path: Path | None = None,
     ) -> Path:
         downloaded_languages.append(candidate.language)
         subtitle_path = source_dir / f"subtitles.{candidate.language}.vtt"
@@ -663,6 +783,35 @@ def test_command_status_marks_missing_required_tools() -> None:
     assert _command_status("/usr/local/bin/tool", required=True) == "ok"
 
 
+@pytest.mark.parametrize(
+    ("version_output", "expected_status"),
+    [
+        ("v22.0.0", "ok"),
+        ("v26.1.0", "ok"),
+        ("v20.19.0", "missing"),
+        ("not-a-version", "missing"),
+    ],
+)
+def test_node_runtime_status_enforces_ytdlp_minimum(
+    monkeypatch,
+    version_output: str,
+    expected_status: str,
+) -> None:
+    monkeypatch.setattr(
+        "voxcraft.cli.subprocess.run",
+        lambda *args, **kwargs: SimpleNamespace(
+            stdout=version_output,
+            stderr="",
+            returncode=0,
+        ),
+    )
+
+    status, detail = _node_runtime_status("/usr/local/bin/node")
+
+    assert status == expected_status
+    assert version_output in detail
+
+
 def test_process_video_dry_run_applies_explicit_model_override(monkeypatch, tmp_path: Path) -> None:
     metadata = VideoMetadata(
         video_id="xyz789",
@@ -672,7 +821,10 @@ def test_process_video_dry_run_applies_explicit_model_override(monkeypatch, tmp_
         automatic_captions={},
     )
 
-    def fake_probe_video(url: str) -> tuple[VideoMetadata, dict[str, object]]:
+    def fake_probe_video(
+        url: str,
+        diagnostics: list[str] | None = None,
+    ) -> tuple[VideoMetadata, dict[str, object]]:
         return metadata, {"id": metadata.video_id, "webpage_url": metadata.url}
 
     monkeypatch.setattr("voxcraft.pipeline.probe_video", fake_probe_video)
@@ -699,7 +851,10 @@ def test_process_video_dry_run_uses_high_quality_qwen_model(monkeypatch, tmp_pat
         automatic_captions={},
     )
 
-    def fake_probe_video(url: str) -> tuple[VideoMetadata, dict[str, object]]:
+    def fake_probe_video(
+        url: str,
+        diagnostics: list[str] | None = None,
+    ) -> tuple[VideoMetadata, dict[str, object]]:
         return metadata, {"id": metadata.video_id, "webpage_url": metadata.url}
 
     monkeypatch.setattr("voxcraft.pipeline.probe_video", fake_probe_video)
@@ -728,7 +883,10 @@ def test_process_video_dry_run_prefers_explicit_subtitle_language(monkeypatch, t
         automatic_captions={},
     )
 
-    def fake_probe_video(url: str) -> tuple[VideoMetadata, dict[str, object]]:
+    def fake_probe_video(
+        url: str,
+        diagnostics: list[str] | None = None,
+    ) -> tuple[VideoMetadata, dict[str, object]]:
         return metadata, {"id": metadata.video_id, "webpage_url": metadata.url}
 
     monkeypatch.setattr("voxcraft.pipeline.probe_video", fake_probe_video)
@@ -1267,7 +1425,10 @@ def test_process_video_dry_run_allows_whisper_cpp_override(monkeypatch, tmp_path
         automatic_captions={},
     )
 
-    def fake_probe_video(url: str) -> tuple[VideoMetadata, dict[str, object]]:
+    def fake_probe_video(
+        url: str,
+        diagnostics: list[str] | None = None,
+    ) -> tuple[VideoMetadata, dict[str, object]]:
         return metadata, {"id": metadata.video_id, "webpage_url": metadata.url}
 
     monkeypatch.setattr("voxcraft.pipeline.probe_video", fake_probe_video)

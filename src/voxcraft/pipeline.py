@@ -64,7 +64,8 @@ def process_video(
     if cached_result is not None:
         return cached_result
 
-    metadata, raw_info = probe_video(url)
+    probe_diagnostics: list[str] | None = [] if not dry_run else None
+    metadata, raw_info = probe_video(url, diagnostics=probe_diagnostics)
     candidate = choose_subtitle_candidate(
         subtitles=metadata.subtitles,
         preferred_language=language or config.language_preference,
@@ -111,6 +112,8 @@ def process_video(
         )
     )
     append_log(paths.pipeline_log_path, f"Starting pipeline for {metadata.url}")
+    for diagnostic in probe_diagnostics or []:
+        append_log(paths.pipeline_log_path, f"Probe diagnostic: {diagnostic}")
     write_metadata_artifacts(
         metadata=metadata,
         raw_info=raw_info,
@@ -144,6 +147,7 @@ def process_video(
                 source_dir=paths.source_dir,
                 candidate=candidate,
                 force=force,
+                log_path=paths.pipeline_log_path,
             )
             segments = parse_subtitle_file(subtitle_path)
         except Exception as exc:

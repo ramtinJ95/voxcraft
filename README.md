@@ -42,8 +42,10 @@ Supported target:
 - Apple Silicon macOS
 - Python `3.11`
 
-Required external tool:
+Required external tools:
 - `ffmpeg`
+- `node` 22 or newer
+  Used by `yt-dlp` to solve YouTube JavaScript challenges
 
 Optional external tools:
 - `codex`
@@ -68,7 +70,7 @@ Python dependencies are installed with `uv sync` from [pyproject.toml](pyproject
 Install the system prerequisites:
 
 ```bash
-brew install python@3.11 uv ffmpeg
+brew install python@3.11 uv ffmpeg node
 ```
 
 If you want the fallback backend too:
