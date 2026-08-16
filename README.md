@@ -44,7 +44,7 @@ Supported target:
 
 Required external tools:
 - `ffmpeg`
-- `node`
+- `node` 22 or newer
   Used by `yt-dlp` to solve YouTube JavaScript challenges
 
 Optional external tools:

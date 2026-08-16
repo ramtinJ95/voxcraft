@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import os
 import platform
+import re
 import shutil
+import subprocess
 import sys
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
@@ -35,6 +37,7 @@ from .utils import write_text
 
 app = typer.Typer(help="Local YouTube transcript preparation pipeline.")
 console = Console()
+MINIMUM_NODE_MAJOR_VERSION = 22
 
 
 @app.callback()
@@ -68,6 +71,32 @@ def _command_status(location: str | None, *, required: bool) -> str:
     if location:
         return "ok"
     return "missing" if required else "optional"
+
+
+def _node_runtime_status(location: str | None) -> tuple[str, str]:
+    if location is None:
+        return "missing", f"Node {MINIMUM_NODE_MAJOR_VERSION}+ is required by yt-dlp"
+
+    try:
+        completed = subprocess.run(
+            [location, "--version"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return "missing", f"could not execute {location}: {exc}"
+
+    version_text = (completed.stdout or completed.stderr).strip()
+    match = re.fullmatch(r"v?(\d+)(?:\.\d+){0,2}", version_text)
+    if completed.returncode != 0 or match is None:
+        return "missing", f"could not determine Node version from {location}: {version_text or 'no output'}"
+
+    major_version = int(match.group(1))
+    if major_version < MINIMUM_NODE_MAJOR_VERSION:
+        return "missing", f"{version_text} at {location}; Node {MINIMUM_NODE_MAJOR_VERSION}+ is required"
+    return "ok", f"{version_text} at {location}"
 
 
 def _load_runtime_config(
@@ -195,9 +224,10 @@ def doctor(ctx: typer.Context) -> None:
     table.add_column("Details")
 
     resolved_qwen_command = describe_qwen_command(config.qwen_command)
+    node_status, node_detail = _node_runtime_status(shutil.which("node"))
+    table.add_row("node", node_status, node_detail)
     command_rows = [
         ("ffmpeg", shutil.which("ffmpeg"), "required for audio normalization and local ASR", True),
-        ("node", shutil.which("node"), "required by yt-dlp for YouTube JavaScript challenges", True),
         (
             "voxcraft-qwen",
             resolved_qwen_command or f"{Path(sys.executable).resolve()} -m voxcraft.qwen_cli",

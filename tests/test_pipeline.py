@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from voxcraft.cli import _command_status
+from voxcraft.cli import _command_status, _node_runtime_status
 from voxcraft.config import (
     CONFIG_ENV_VAR,
     PipelineConfig,
@@ -728,6 +728,35 @@ def test_command_status_marks_missing_required_tools() -> None:
     assert _command_status(None, required=True) == "missing"
     assert _command_status(None, required=False) == "optional"
     assert _command_status("/usr/local/bin/tool", required=True) == "ok"
+
+
+@pytest.mark.parametrize(
+    ("version_output", "expected_status"),
+    [
+        ("v22.0.0", "ok"),
+        ("v26.1.0", "ok"),
+        ("v20.19.0", "missing"),
+        ("not-a-version", "missing"),
+    ],
+)
+def test_node_runtime_status_enforces_ytdlp_minimum(
+    monkeypatch,
+    version_output: str,
+    expected_status: str,
+) -> None:
+    monkeypatch.setattr(
+        "voxcraft.cli.subprocess.run",
+        lambda *args, **kwargs: SimpleNamespace(
+            stdout=version_output,
+            stderr="",
+            returncode=0,
+        ),
+    )
+
+    status, detail = _node_runtime_status("/usr/local/bin/node")
+
+    assert status == expected_status
+    assert version_output in detail
 
 
 def test_process_video_dry_run_applies_explicit_model_override(monkeypatch, tmp_path: Path) -> None:
